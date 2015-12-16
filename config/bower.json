@@ -1,0 +1,21 @@
+{
+  "name": "httppush",
+  "authors": [
+    "Sean Konagaya <skonagaya@novacoast.com>"
+  ],
+  "description": "",
+  "main": "",
+  "moduleType": [],
+  "license": "MIT",
+  "homepage": "",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "Slate": "pebble-slate#~0.0.3"
+  }
+}
