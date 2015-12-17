@@ -14,32 +14,11 @@ static char **theList = NULL;
 static char **listBuffer = NULL;
 static char *listString = NULL;
 static int listSize = 0;
-static DataLoggingSessionRef my_data_log;
 
 enum {
   PERSIST_LIST_SIZE, // Persistent storage key for wakeup_id
   PERSIST_LIST
 };
-typedef enum {
-  DATA_LOGGING_SUCCESS = 0, //!< Successful operation
-  DATA_LOGGING_BUSY, //!< Someone else is writing to this logging session
-  DATA_LOGGING_FULL, //!< No more space to save data
-  DATA_LOGGING_NOT_FOUND, //!< The logging session does not exist
-  DATA_LOGGING_CLOSED, //!< The logging session was made inactive
-  DATA_LOGGING_INVALID_PARAMS //!< An invalid parameter was passed to one of the functions
-} DataLoggingResult;
-
-void accel_data_handler(AccelData *data, uint32_t num_samples) {
-  DataLoggingResult r = data_logging_log(my_data_log, data, num_samples);
-}
-void handle_init(void) {
-  my_data_log = data_logging_create(
-    /* tag */                 42,
-    /* DataLoggingItemType */ DATA_LOGGING_BYTE_ARRAY,
-    /* length */              sizeof(AccelData),
-    /* resume */              true
-  );
-}
 
 static void send_to_phone() {
   if (listSize == 0) return;
