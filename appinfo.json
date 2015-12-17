@@ -17,12 +17,7 @@
     "KEY_SIZE": 1
   },
   "resources": {
-    "media": [
-    {
-      "type":"raw",
-      "name":"ANIMATION",
-      "file":"ball.png"
-    }
-  ]
+      "media": [
+      ]
   }
 }

@@ -344,6 +344,8 @@ function sendClose(){
 
 function sendClose() {
   console.log("Sending close");
+  
+    reconcileList();
 
     // Set the return URL depending on the runtime environment
     var return_to = getQueryParam('return_to', 'pebblejs://close#');

@@ -1,23 +1,4 @@
-Pebble.addEventListener('ready', function() {
-  console.log('PebbleKit JS ready!');
-});
 
-Pebble.addEventListener("appmessage",
-  function(e) {
-    var selectedIndex = parseInt(e.payload["2"]);
-    console.log("Got a message: ", e.payload["2"]);
-
-    if (!(localStorage.getItem("array")===null)) {
-      console.log("Found existing list. Loading localStorage:");
-      console.log(localStorage['array']);
-      var currentList = JSON.parse(localStorage['array']);
-      sendHttpRequest(
-        currentList[selectedIndex]["endpoint"],
-        currentList[selectedIndex]["json"]
-      );
-    }
-  }
-);
 
 function sendHttpRequest(ToUrl,withJson) {
 
@@ -83,25 +64,21 @@ function sendHttpRequest(ToUrl,withJson) {
 }
 
 Pebble.addEventListener('showConfiguration', function() {
-  var url = 'http://127.0.0.1:8080';
+  //var url = 'http://127.0.0.1:8080';
+  var url = 'http://7ead1f47.ngrok.io';
 
   console.log('Showing configuration page: ' + url);
 
   Pebble.openURL(url);
 });
 
-Pebble.addEventListener('webviewclosed', function(e) {
-  var configData = JSON.parse(decodeURIComponent(e.response));
-  console.log("Storing localStorage stringified: " + JSON.stringify(configData['array']));
-  localStorage.setItem("array", JSON.stringify(configData['array']));
-
-  console.log('Configuration page returned: ' + JSON.stringify(configData));
+function sendListToPebble(listArray) {
 
   var listToString = "";
   var i;
 
-  for (i=0; i < configData['array'].length; i++) {
-    var currentName = configData['array'][i]["name"].trim().replace(",","");
+  for (i=0; i < listArray.length; i++) {
+    var currentName = listArray[i]["name"].trim().replace(",","");
     listToString = listToString + currentName + ","
   }
   listToString = listToString.substring(0,listToString.length-1);
@@ -109,7 +86,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
   console.log("List has been stringified to " + listToString);
 
   var dict = {};
-  if(configData['array']) {
+  if(listArray) {
     dict['KEY_LIST'] = listToString;
     dict['KEY_SIZE'] = i;
   } else {
@@ -125,7 +102,44 @@ Pebble.addEventListener('webviewclosed', function(e) {
     }, function() {
       console.log('Send failed!');
     });
+}
 
+Pebble.addEventListener('webviewclosed', function(e) {
+  console.log('Configuration page returned: ' + JSON.stringify(configData));
+  var configData = JSON.parse(decodeURIComponent(e.response));
+  console.log("Storing localStorage stringified: " + JSON.stringify(configData['array']));
+  localStorage.setItem("array", JSON.stringify(configData['array']));
+
+  sendListToPebble(configData['array']);
 });
 
+Pebble.addEventListener('ready', function() {
+  console.log('PebbleKit JS ready!');
+  var localList = localStorage.getItem('array');
+  if ((!localStorage === null)) {
+    console.log('Sending data to Pebble');
+    console.log(JSON.stringify(configData['array']));
+    sendListToPebble(configData['array']);
+  } else {
+    console.log('Not sending data to Pebble because localStorage is empty');
+  }
+  
+});
+
+Pebble.addEventListener("appmessage",
+  function(e) {
+    var selectedIndex = parseInt(e.payload["2"]);
+    console.log("Got a message: ", e.payload["2"]);
+
+    if (!(localStorage.getItem("array")===null)) {
+      console.log("Found existing list. Loading localStorage:");
+      console.log(localStorage['array']);
+      var currentList = JSON.parse(localStorage['array']);
+      sendHttpRequest(
+        currentList[selectedIndex]["endpoint"],
+        currentList[selectedIndex]["json"]
+      );
+    }
+  }
+);
 
