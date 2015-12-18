@@ -86,12 +86,12 @@
       <div id='HttpGetFields' class="item-container-content">
         <label class="item">
           <div class="item-input-wrapper">
-            <input id="displayedName" type="text" class="item-input" name="input-1" placeholder="Example: Open the Garage Door">
+            <input id="displayedName" maxlength="30" type="text" class="item-input" name="input-1" placeholder="Example: Open the Garage Door">
           </div>
         </label>
       </div>
       <div class="item-container-footer">
-        Enter the name of the request that will be displayed on your pebble. Shorten as necessary so that it fits on your pebble screen.
+        Enter the name of the request that will be displayed on your pebble. Shorten as necessary so that it fits on your pebble screen. Maximum length is 30 characters.
       </div>
     </div>
 
@@ -101,7 +101,7 @@
     <div id='HttpGetFields' class="item-container-content">
       <label class="item">
         <div class="item-input-wrapper">
-          <input id="httpGetUrlInput" type="text" class="item-input" name="input-1" placeholder="Example: https://198.162.15.15:8080/example.aspx">
+          <input id="httpGetUrlInput" type="url" class="item-input" name="input-1" placeholder="Example: http://1.1.1.1:81/example.aspx">
         </div>
       </label>
     </div>
@@ -133,16 +133,9 @@
     <br>
     <div class="item-container">
       <div class="button-container">
-        <input onclick="testHttp();" type="button" class="item-button" value="Test">
+        <input id="testButton" onclick="testHttp();" type="button" class="item-button" value="Test">
       </div>
     </div>
-    <div id="testResultsContainer" class="item-container">
-      <div  class="item-container-header">HTTP Results</div>
-      <div class="item-container-content">
-        <div id="testResults" class="item">
-      </div>
-    </div>
-  </div>
     <div class="item-container">
       <div class="button-container">
         <input onclick="createNewEntry();" type="button" class="item-button" value="Save Request">
@@ -153,6 +146,12 @@
         <input onclick="showReorderDisplay();" type="button" class="item-button" value="Cancel">
       </div>
     </div>
+    <div id="testResultsContainer" class="item-container">
+      <div  class="item-container-header">HTTP Results</div>
+      <div class="item-container-content">
+        <div id="testResults" class="item"></div>
+      </div>
+    </div>
 </div>
 
 
@@ -160,16 +159,21 @@
   
   <div id="pebbleSaveButton" class='item-container'>
     <div class='button-container'>
-      <input onclick="sendClose();" type='button' class='item-button' value='Save list to Pebble'>
+      <input onclick="sendClose(true);" type='button' class='item-button' value='Save Changes'>
     </div>
   </div> 
-  
+  <div id="pebbleSaveButton" class='item-container'>
+    <div class='button-container'>
+      <input onclick="sendClose(false);" type='button' class='item-button' value='Cancel'>
+    </div>
+  </div> 
+  <!--
   <div id="pebbleSaveButton" class='item-container'>
     <div class='button-container'>
       <input onclick="localStorage.clear();" type='button' class='item-button' value='Delete LocalStorage'>
     </div>
   </div>
-
+-->
 <iframe id="getFrame"></iframe>
   
   <script src='/bower_components/Slate/dist/js/slate.min.js'></script>

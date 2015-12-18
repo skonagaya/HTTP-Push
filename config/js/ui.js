@@ -134,76 +134,123 @@ function jsonSelected() {
 }
 
 function testHttp() {
+  var displayedName = $('#displayedName').val();
   var endpointURL = $('#httpGetUrlInput').val();
   var jsonString = $('#jsonPostJsonInput').val();
-  //console.log("JSON String: " + jsonString);
-  //console.log(JSON.parse(jsonString));
-  
-  if (jsonSelected()) {
 
-/*
+  if (displayedName == null || displayedName == "")
+  {
+      animateRed($('#displayedName').parent());
+
+  } else if (endpointURL == null || endpointURL == "") {
+      animateRed($('#httpGetUrlInput').parent());
+  } else if ((jsonString == null || jsonString == "") && jsonSelected()) {
+      animateRed($('#jsonPostJsonInput'));
+  } else {
+    $('#testButton').addClass('pendingResponse');
+    $('#testButton').val('');
+    //console.log("JSON String: " + jsonString);
+    //console.log(JSON.parse(jsonString));
+    
+    if (jsonSelected()) {
+
+  /*
+        $.ajax({
+        dataType: "jsonp",
+        url: "http://api.openweathermap.org/data/2.5/forecast/city",
+        jsonCallback: 'jsonp',
+    data: { id: "524901", APPID: "da0bd1a46046c9f4d18a3fca969929b1" },
+        cache: false,
+        success: function (data) {
+          alert(JSON.stringify(data));
+        }
+      });
+  */
       $.ajax({
-      dataType: "jsonp",
-      url: "http://api.openweathermap.org/data/2.5/forecast/city",
-      jsonCallback: 'jsonp',
-  data: { id: "524901", APPID: "da0bd1a46046c9f4d18a3fca969929b1" },
-      cache: false,
-      success: function (data) {
-        alert(JSON.stringify(data));
-      }
-    });
-*/
-    $.ajax({
-      method: "POST",
-      url: endpointURL,
-      data: JSON.parse(jsonString),
-      dataType: "json",
-      success: function(data){
-        $('#testResults').html(JSON.stringify(data));
-        $('#testResultsContainer').slideDown();
-      },
-      failure: function(errMsg) {
-        $('#testResults').html(JSON.stringify(errMsg));
-        $('#testResultsContainer').slideDown();
-      },
-      error: function(jqXHR, textStatus, errorThrown) {
-        console.log(jqXHR);
-        var respStatus = jqXHR.status;
-        var respText = jqXHR.responseText;
-        var respStatusText = jqXHR.statusText;
-        var results = respStatus + " " + respStatus + ": " + respText;
+        method: "POST",
+        url: endpointURL,
+        data: JSON.parse(jsonString),
+        dataType: "json",
+        success: function(data){
+          $('#testResults').html(JSON.stringify(data));
+          $('#testResultsContainer').show();
+          $('#testButton').removeClass('pendingResponse');
+          $('#testButton').val('Test');
+          $('html, body').animate({
+              scrollTop: $("#testResultsContainer").offset().top
+          }, 1000);
+        },
+        failure: function(errMsg) {
+          $('#testResults').html(JSON.stringify(errMsg));
+          $('#testResultsContainer').show();
+          $('#testButton').removeClass('pendingResponse');
+          $('#testButton').val('Test');
+          $('html, body').animate({
+              scrollTop: $("#testResultsContainer").offset().top
+          }, 1000);
+        },
+        error: function(jqXHR, textStatus, errorThrown) {
+          console.log(jqXHR);
+          var respStatus = jqXHR.status;
+          var respText = jqXHR.responseText;
+          var respStatusText = jqXHR.statusText;
+          var results = respStatus + " " + respStatus + ": " + respText;
 
-        if (respStatus == 0) {
-          results = results + " Encountered an error. Make sure Access-Control-Allow-Origin is configured.";
+          if (respStatus == 0) {
+            results = results + " Encountered an error. Make sure Access-Control-Allow-Origin is configured.";
+          }
+
+          $('#testResults').html(results);
+          $('#testResultsContainer').show();
+          $('#testButton').removeClass('pendingResponse');
+          $('#testButton').val('Test');
+          $('html, body').animate({
+              scrollTop: $("#testResultsContainer").offset().top
+          }, 1000);
         }
-        $('#testResults').html(results);
-        $('#testResultsContainer').slideDown();
-      }
-    });
-  }
-  else {
+      });
+    }
+    else {
 
 
 
-    $.ajax({
-      method: "GET",
-      url: endpointURL,
-      success: function(data){
-        $('#testResults').html(JSON.stringify(data));
-        $('#testResultsContainer').slideDown();
-        //alert(JSON.stringify(data));
-      },
-      failure: function(errMsg) {
-          alert(errMsg);
-      },
-      error: function(jqXHR, textStatus, errorThrown) {
-        if (jqXHR.status == 0) {
-            document.getElementById('getFrame').src = endpointURL;
-            $('#testResults').html("Encountered an error. The Access-Control-Allow-Origin header may not be configured.");
-            $('#testResultsContainer').slideDown();
+      $.ajax({
+        method: "GET",
+        url: endpointURL,
+        success: function(data){
+          $('#testResults').html(JSON.stringify(data));
+          $('#testResultsContainer').show();
+          $('#testButton').removeClass('pendingResponse');
+          $('#testButton').val('Test');
+          $('html, body').animate({
+              scrollTop: $("#testResultsContainer").offset().top
+          }, 1000);
+          //alert(JSON.stringify(data));
+        },
+        failure: function(errMsg) {
+          $('#testResults').html(JSON.stringify(errMsg));
+          $('#testResultsContainer').show();
+          $('#testButton').removeClass('pendingResponse');
+          $('#testButton').val('Test');
+          $('html, body').animate({
+              scrollTop: $("#testResultsContainer").offset().top
+          }, 1000);
+        },
+        error: function(jqXHR, textStatus, errorThrown) {
+          if (jqXHR.status == 0) {
+              document.getElementById('getFrame').src = endpointURL;
+
+              $('#testResults').html("Encountered an error. The Access-Control-Allow-Origin header may not be configured.");
+              $('#testResultsContainer').show();
+              $('#testButton').removeClass('pendingResponse');
+              $('#testButton').val('Test');
+              $('html, body').animate({
+                  scrollTop: $("#testResultsContainer").offset().top
+              }, 1000);
+          }
         }
-      }
-    });
+      });
+    }
   }
 }
 
@@ -342,15 +389,21 @@ function sendClose(){
     return defaultValue || false;
   }
 
-function sendClose() {
+function sendClose(saveChanges) {
   console.log("Sending close");
-  
+
+  if (saveChanges) {
     reconcileList();
 
     // Set the return URL depending on the runtime environment
     var return_to = getQueryParam('return_to', 'pebblejs://close#');
     document.location = return_to + encodeURIComponent(JSON.stringify(getConfigData()));
+  } else {
+    var return_to = getQueryParam('return_to', 'pebblejs://close#');
+    document.location = return_to;
+  }
 }
+
 
 
 function showHttpGetForm() {

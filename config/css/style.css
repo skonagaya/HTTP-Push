@@ -18,3 +18,9 @@
 .addNewButton {
   text-align: center;
 }
+
+.pendingResponse {
+  background-image: url(/images/rolling.gif);
+  background-repeat: no-repeat;
+  background-position: center;
+}
