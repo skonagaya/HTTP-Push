@@ -15,12 +15,10 @@ static char *s_buffer = NULL;
 static char *listAction = NULL;
 static char **theList = NULL;
 static char **statusList = NULL;
-static char **listBuffer = NULL;
 static char *listString = NULL;
 static int responseIndex = -1;
 static int listSize = 0;
 static bool loaded = false;
-static char *errorText = NULL;
 
 enum {
   PERSIST_LIST_SIZE, // Persistent storage key for wakeup_id
@@ -59,7 +57,19 @@ static void free_all_data() {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Starting free all procedure");
 
   APP_LOG(APP_LOG_LEVEL_DEBUG, "The listSize is %d", listSize);
-  
+
+  if(s_buffer != NULL) {
+    free(s_buffer);
+    s_buffer = NULL;
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
+  }
+
+  if(listAction != NULL) {
+    free(listAction);
+    listAction = NULL;
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed listAction memory");
+  }
+
   if (theList != NULL){
     if (listSize != 0) {
       size_t i = 0;
@@ -67,20 +77,26 @@ static void free_all_data() {
         if (theList[i] != NULL){
           free(theList[i]);
           theList[i] = NULL;
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed theList[%d] memory", i);
         }
-        if (statusList[i] != NULL) {
+        if (strcmp(statusList[i],"Ready") != 0 &&
+            strcmp(statusList[i],"Pending...") != 0) {
           free(statusList[i]);
           statusList[i] = NULL;
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed statusList[%d] memory", i);
+
         }
       }
     }
     free(theList);
     theList = NULL;
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed theList memory");
   }
 
   if (listString != NULL) {
     free(listString);
     listString = NULL;
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed listString memory");
   }
   //if (s_buffer != NULL)
     //free(s_buffer);
@@ -302,7 +318,7 @@ static void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *
   //int mins = tea_array[cell_index->row].mins;
 
   // Using simple space padding between name and s_item_text for appearance of edge-alignment
-  snprintf(s_item_text, sizeof(s_item_text), "%s%*sStatus: %s ", PBL_IF_ROUND_ELSE("", name), 
+  snprintf(s_item_text, sizeof(s_item_text), PBL_IF_ROUND_ELSE("%s%*sStatus: %s ","%s%*s%s "), PBL_IF_ROUND_ELSE("", name), 
            PBL_IF_ROUND_ELSE(0, text_gap_size), "", status);
   menu_cell_basic_draw(ctx, cell_layer, PBL_IF_ROUND_ELSE(name, s_item_text), 
                        PBL_IF_ROUND_ELSE(s_item_text, NULL), NULL);
@@ -384,6 +400,7 @@ static void init(void) {
 static void deinit(void) {
   window_destroy(s_menu_window);
   free_all_data();
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "HERE3");
 }
 
 int main(void) {

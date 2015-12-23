@@ -10,7 +10,6 @@ var newEntry = false;
 
 (function() {
   document.getElementById('createNewFields').style.display = "none";
-  document.getElementById('removeFields').style.display = "none";
   document.getElementById('JsonPostFields').style.display = "none";
   //$('#validationFeedbackLabel').hide();
 
@@ -23,11 +22,14 @@ var newEntry = false;
   $('#getFrame').hide();
 
 
+
 })();
 
 function generateLists(){
+
+
   $('.item-draggable-list').empty();
-  $('.item-dynamic-list').empty();
+  $('.item.addNewButton').remove();
   for (var i=0; i < currentList.length; i++) {
 
     // Create a row for the draggable list
@@ -37,33 +39,52 @@ function generateLists(){
     newDragLabel.name = currentList[i]["name"];
     newDragLabel.id = i;
 
-    // Create a row for the removable list
-    var newRemoveLabel = document.createElement('label');
-    newRemoveLabel.className = "item";
-    newRemoveLabel.innerHTML = currentList[i]["name"];
-    newRemoveLabel.name = currentList[i]["name"];
-    newRemoveLabel.id = i;
+    var newDragHandle = document.createElement('div');
+    var newDragHandleBar1 = document.createElement('div');
+    var newDragHandleBar2 = document.createElement('div');
+    var newDragHandleBar3 = document.createElement('div');
+
+    var newDeleteButton = document.createElement('div');
+
+    newDeleteButton.className = "delete-item";
+    newDeleteButton.onclick = function deleteLabelOnClick () {
+      document.getElementById('reorderList').removeChild(this.parentNode);
+      var updatedList = [];
+      $('.item-draggable-list').children('label.item').each(function() {
+        updatedList.push(currentList[this.id]);
+      });
+      currentList = updatedList;
+    }
+    newDeleteButton.style.visibility = "hidden";
+    newDeleteButton.id = "deleteButton"+i.toString();
+
+    newDragHandle.className = "item-draggable-handle";
+    newDragHandleBar1.className = "item-draggable-handle-bar";
+    newDragHandleBar2.className = "item-draggable-handle-bar";
+    newDragHandleBar3.className = "item-draggable-handle-bar";
+
+    newDragHandle.appendChild(newDragHandleBar1);
+    newDragHandle.appendChild(newDragHandleBar2);
+    newDragHandle.appendChild(newDragHandleBar3);
+
+    newDragLabel.appendChild(newDeleteButton);
+
+    newDragLabel.appendChild(newDragHandle);
+
 
     $('.item-draggable-list').append(newDragLabel);
-    $('.item-dynamic-list').append(newRemoveLabel);
     
   }
 
   var addItemDraggable = document.createElement('div');
-  var addItemDynamic = document.createElement('div');
   addItemDraggable.className = "item addNewButton";
-  addItemDynamic.className = "item addNewButton";
   addItemDraggable.innerHTML = '<a href="#" onclick="showCreateDisplay();">Create a New Request</a>';
-  addItemDynamic.innerHTML = '<a href="#" onclick="showCreateDisplay();">Create a New Request</a>';
 
 
-  $('.item-draggable-list').append(addItemDraggable);
-  $('.item-dynamic-list').append(addItemDynamic);
+  $('.item-draggable-list').parent().append(addItemDraggable);
 
   // Reload slate to enable dynamic content 
-  $.getScript("/bower_components/Slate/dist/js/slate.min.js", function(){
-    $( ".item.add-item" ).css("display","none")
-  });
+
 }
 
 function reconcileList() {
@@ -72,12 +93,6 @@ function reconcileList() {
     updatedList = currentList;
     console.log(updatedList);
     newEntry = false;
-
-  } else if (removeCompleted()) {
-    $('.item-dynamic-list').children('label.item').each(function() {
-      //alert('pushing ' + this.id);
-      updatedList.push(currentList[this.id]);
-    });
   } else if (reorderCompleted()) {
     console.log(updatedList);
     $('.item-draggable-list').children('label.item').each(function() {
@@ -118,9 +133,6 @@ function initData() {
       }
     ];
   }
-}
-function removeCompleted() {
-  return $( "a[name=tab-2].tab-button.active" ).html() == "Remove";
 }
 function reorderCompleted() {
   return $( "a[name=tab-2].tab-button.active" ).html() == "Reorder";
@@ -254,6 +266,19 @@ function testHttp() {
   }
 }
 
+var isDragging = false;
+$("label.item")
+.mousedown(function() {
+    isDragging = false;
+})
+.mousemove(function() {
+    isDragging = true;
+    //alert('asdf');
+ })
+.mouseup(function() {
+    isDragging = false;
+});
+
 function verifyJson() {
     var validationLabel = document.getElementById('validationFeedbackLabel');
     console.log("Input : " + $('#jsonPostJsonInput').val());
@@ -276,11 +301,21 @@ function showReorderDisplay() {
     clearFields();
     document.getElementById('createNewFields').style.display = "none";
     document.getElementById('reorderFields').style.display = "block";
-    document.getElementById('removeFields').style.display = "none";
+    $('.item-draggable-list').children('label.item').each(function() {
+      for (var i = 0; i < this.childNodes.length; i++) {
+        var currentClass = this.childNodes[i].className;
+        if (currentClass == "delete-item") {
+          this.childNodes[i].style.visibility = "hidden";
+        } else if (currentClass == "item-draggable-handle") {
+          this.childNodes[i].style.visibility = "visible";
+        }
+      }
+    });
     $('#maintab').show();
     $('#removeTab').removeClass("active");
     $('#reorderTab').addClass("active");
     $('#pebbleSaveButton').show();
+    $('#pebbleCancelButton').show();
 }
 
 function showCreateDisplay() {
@@ -290,28 +325,25 @@ function showCreateDisplay() {
     clearFields();
     document.getElementById('createNewFields').style.display = "block";
     document.getElementById('reorderFields').style.display = "none";
-    document.getElementById('removeFields').style.display = "none";
 
     $('#maintab').hide();
     $('#testResultsContainer').hide();
     $('#pebbleSaveButton').hide();
+    $('#pebbleCancelButton').hide();
 }
 
 function showRemoveDisplay() {
-  reconcileList();
-  generateLists();
-  // Remove Slate function which appends to the list
-  // We use the create tab for this config page
-  $( ".item.add-item" ).css("display","none")
-  document.getElementById('removeFields').style.display = "block";
-  document.getElementById('reorderFields').style.display = "none";
-  document.getElementById('createNewFields').style.display = "none";
-    $('#maintab').show();
 
-  $('#testResultsContainer').hide()
-    $('#reorderTab').removeClass("active");
-    $('#removeTab').addClass("active");
-    $('#pebbleSaveButton').show();
+    $('.item-draggable-list').children('label.item').each(function() {
+      for (var i = 0; i < this.childNodes.length; i++) {
+        var currentClass = this.childNodes[i].className;
+        if (currentClass == "delete-item") {
+          this.childNodes[i].style.visibility = "visible";
+        } else if (currentClass == "item-draggable-handle") {
+          this.childNodes[i].style.visibility = "hidden";
+        }
+      }
+    });
 }
 
 function clearFields() {

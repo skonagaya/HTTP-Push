@@ -24,3 +24,7 @@
   background-repeat: no-repeat;
   background-position: center;
 }
+
+.item.add-item {
+  display: none;
+}

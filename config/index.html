@@ -13,7 +13,7 @@
 
   <!-- Title -->
   <div class='item-container'>
-    <h1 class='title'>HTTP Push Configuration</h1>
+    <h1 class='title'>4HTTP Push Configuration</h1>
   </div>
 
     <!-- Description body up at top -->
@@ -53,21 +53,6 @@
     </div>
   </div>
 
-
-  <!-- List of items that can be removed -->
-  <div id='removeFields' class='item-container'>
-    <div class="item-container">
-      <div class="item-container-header">Configured Requests</div>
-      <div class="item-container-content">
-        <div class="item-dynamic-list">
-        </div>
-      </div>
-      <!-- Footer -->
-      <div class='item-container-footer'>
-        Press 'X' to delete the http request. 
-      </div>
-    </div>
-  </div>
 
 
   <!-- New item form -->
@@ -112,6 +97,7 @@
 
     <!-- JSON POST Form -->
     <div id='JsonPostFields' class="item-container">
+
       <div class="item-container-header">Enter JSON content</div>
       <div class="item-container-content">
         <label class="item">
@@ -162,11 +148,12 @@
       <input onclick="sendClose(true);" type='button' class='item-button' value='Save Changes'>
     </div>
   </div> 
-  <div id="pebbleSaveButton" class='item-container'>
+  <div id="pebbleCancelButton" class='item-container'>
     <div class='button-container'>
       <input onclick="sendClose(false);" type='button' class='item-button' value='Cancel'>
     </div>
   </div> 
+
   <!--
   <div id="pebbleSaveButton" class='item-container'>
     <div class='button-container'>
@@ -177,10 +164,12 @@
 <iframe id="getFrame"></iframe>
   
   <script src='/bower_components/Slate/dist/js/slate.min.js'></script>
+  
   <script src='/js/jquery-2.1.4.min.js'></script>
   <script src='/js/jquery.color.min.js'></script>
+
   <script src='/js/main.js'></script>
-  <script src='/js/ui.js'></script>
+  <script src='/js/ui.js?4'></script>
   <script src='/js/util.js'></script>
 </body>
 </html>

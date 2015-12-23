@@ -3,8 +3,7 @@
 function sendHttpRequest(ToUrl,withJson,index) {
 
   var xhr = new XMLHttpRequest();
-
-  console.log("I'M here now");
+  xhr.timeout = 10000;
 
   if (withJson != "") {
     xhr.onreadystatechange = function() {
@@ -33,7 +32,7 @@ function sendHttpRequest(ToUrl,withJson,index) {
       data: JSON.parse(withJson),
       dataType: "json",
       success: function(data){
-        console.log("Successfully sent POST");
+        console.log("Successfully sent POST"); 
         console.log("Results: " + JSON.stringify(data));
       },
       failure: function(errMsg) {
@@ -78,6 +77,7 @@ function sendHttpRequest(ToUrl,withJson,index) {
 
 Pebble.addEventListener('showConfiguration', function() {
   //var url = 'http://127.0.0.1:8080';
+  //var url = 'http://2e32026b.ngrok.io';
   var url = 'http://skonagaya.github.io/';
 
   console.log('Showing configuration page: ' + url);
