@@ -58,12 +58,13 @@ static void free_all_data() {
 
   APP_LOG(APP_LOG_LEVEL_DEBUG, "The listSize is %d", listSize);
 
+/*
   if(s_buffer != NULL) {
     free(s_buffer);
     s_buffer = NULL;
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
   }
-
+*/
   if(listAction != NULL) {
     free(listAction);
     listAction = NULL;
@@ -102,7 +103,7 @@ static void free_all_data() {
     //free(s_buffer);
 }
 
-static void update_menu_data(char *newString, int stringSize) {
+static void update_menu_data(int stringSize) {
 
 
 
@@ -111,7 +112,7 @@ static void update_menu_data(char *newString, int stringSize) {
   if (stringSize == 0) {return;}
 
 
-  if (newString == NULL) {
+  if (stringSize > 0) {
     char *buf= malloc(255);
     int readByteSize = persist_read_string(PERSIST_LIST,buf,255);
     listString = malloc(readByteSize);
@@ -125,9 +126,12 @@ static void update_menu_data(char *newString, int stringSize) {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Read size (value) from persistent storage: %d", listSize);
 
   } else {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Processing stringSize: %i",stringSize);
     listSize = stringSize;
-    listString = malloc((strlen(newString)+1) * sizeof(char));
-    memcpy(listString, newString, (strlen(newString)+1)*sizeof(char));
+    listString = (char*)malloc((strlen(s_buffer)+1)*sizeof(char));
+    memcpy(listString, s_buffer, (strlen(s_buffer)+1)*sizeof(char));
+    //strcpy(listString,s_buffer);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "strlen(listString): %i",strlen(listString));
   }
 
   theList = malloc(listSize * sizeof(char*));
@@ -136,13 +140,13 @@ static void update_menu_data(char *newString, int stringSize) {
   char * pch = NULL;
   int i;
   i = 0;
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Splitting string \"%s\" into tokens:\n",listString);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Splitting string \"%s\" into tokens",listString);
   pch = strtok (listString,",");
   APP_LOG(APP_LOG_LEVEL_DEBUG, "strtok'd");
 
   while (pch != NULL)
   {
-    theList[i] = malloc((strlen(pch)+1) * sizeof(char)); // Add extra for end char
+    theList[i] = (char*)malloc((strlen(pch)+1) * sizeof(char)); // Add extra for end char
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Malloc'd");
     statusList[i] = "Ready";
     memcpy(theList[i++],pch,(strlen(pch)+1) * sizeof(char));
@@ -262,11 +266,16 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
         bytesSizeWritten = persist_write_int(PERSIST_LIST_SIZE,size_of_array);
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (size): %d", bytesSizeWritten);
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list): %d", bytesWritten);
-        update_menu_data(s_buffer,(int)size_of_array);
+        update_menu_data((int)size_of_array);
       }
       menu_layer_reload_data(s_menu_layer);
       if (layer_get_hidden(text_layer_get_layer(s_error_text_layer)) && listString == 0) {
         layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
+      }
+      if(s_buffer != NULL) {
+        free(s_buffer);
+        s_buffer = NULL;
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
       }
     }
   }
@@ -305,6 +314,7 @@ static int16_t get_cell_height_callback(MenuLayer *menu_layer, MenuIndex *cell_i
 #endif
 
 
+
 static void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, 
                              void *callback_context) {
   char* name = theList[cell_index->row];
@@ -318,10 +328,8 @@ static void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *
   //int mins = tea_array[cell_index->row].mins;
 
   // Using simple space padding between name and s_item_text for appearance of edge-alignment
-  snprintf(s_item_text, sizeof(s_item_text), PBL_IF_ROUND_ELSE("%s%*sStatus: %s ","%s%*s%s "), PBL_IF_ROUND_ELSE("", name), 
-           PBL_IF_ROUND_ELSE(0, text_gap_size), "", status);
-  menu_cell_basic_draw(ctx, cell_layer, PBL_IF_ROUND_ELSE(name, s_item_text), 
-                       PBL_IF_ROUND_ELSE(s_item_text, NULL), NULL);
+  snprintf(s_item_text, sizeof(s_item_text), "Status: %s", status);
+  menu_cell_basic_draw(ctx, cell_layer, name, s_item_text, NULL);
 }
 
 static void menu_window_load(Window *window) {
@@ -372,7 +380,8 @@ static void menu_window_unload(Window *window) {
 
 static void init(void) {
   if (persist_exists(PERSIST_LIST_SIZE)){
-    update_menu_data(NULL, 0);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Found presistent store. Loading into memory.");
+    update_menu_data(0);
     //persist_delete(PERSIST_LIST_SIZE);
   }
 
@@ -399,8 +408,7 @@ static void init(void) {
 
 static void deinit(void) {
   window_destroy(s_menu_window);
-  free_all_data();
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "HERE3");
+  //free_all_data();
 }
 
 int main(void) {

@@ -77,7 +77,7 @@ function sendHttpRequest(ToUrl,withJson,index) {
 
 Pebble.addEventListener('showConfiguration', function() {
   //var url = 'http://127.0.0.1:8080';
-  //var url = 'http://2e32026b.ngrok.io';
+  //var url = 'http://1c570efd.ngrok.io';
   var url = 'http://skonagaya.github.io/';
 
   console.log('Showing configuration page: ' + url);
@@ -149,18 +149,23 @@ Pebble.addEventListener('webviewclosed', function(e) {
 
 Pebble.addEventListener('ready', function() {
   console.log('PebbleKit JS ready!');
-  var localList = JSON.parse(localStorage.getItem('array'));
-  console.log(JSON.stringify(localList));
-  if (!(localList === null)) {
-    console.log('Sending data to Pebble');
-    console.log(localList['array']);
-    sendListToPebble(localList,"update");
+  if ((localStorage.getItem("array")===null)) {
+      console.log('localStorage not found. This must be a fresh install!')
+      console.log('Letting the pebble know we\'re shooting blanks.');
+      sendListToPebble("","update");
   } else {
-    console.log('localStorage not found. This must be a fresh install!')
-    console.log('Letting the pebble know we\'re shooting blanks.');
-    sendListToPebble("","update");
+    var localList = JSON.parse(localStorage.getItem('array'));
+    console.log(JSON.stringify(localList));
+    if (!(localList === null)) {
+      console.log('Sending data to Pebble');
+      console.log(localList['array']);
+      sendListToPebble(localList,"update");
+    } else {
+      console.log('localStorage not found. This must be a fresh install!')
+      console.log('Letting the pebble know we\'re shooting blanks.');
+      sendListToPebble("","update");
+    }
   }
-  
 });
 
 Pebble.addEventListener("appmessage",
