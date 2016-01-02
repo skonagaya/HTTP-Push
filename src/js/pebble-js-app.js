@@ -1,11 +1,24 @@
 
 
-function sendHttpRequest(ToUrl,withJson,index) {
+function sendHttpRequest(ToUrl,withJson,index,method) {
 
   var xhr = new XMLHttpRequest();
   xhr.timeout = 10000;
 
-  if (withJson != "") {
+  if (method == "PUT"){
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState == 4) {
+          console.log("Received response from PUT:")
+          console.log(JSON.stringify(xhr.responseText));
+          sendHttpResponseToPebble(xhr.status.toString(),index);
+        }
+    }
+
+    xhr.open(method, ToUrl);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.send(withJson);
+
+  } else if (withJson != "") {
     xhr.onreadystatechange = function() {
         if (xhr.readyState == 4) {
           console.log("Received response from POST:")
@@ -14,7 +27,7 @@ function sendHttpRequest(ToUrl,withJson,index) {
         }
     }
     var strToJson = JSON.parse(withJson);
-    xhr.open('POST', ToUrl, true);
+    xhr.open(method, ToUrl, true);
 
     // Have to to XMLHttpRequest because we dont have jquery :(
     // Testing was done via jquery ajax so results MAY be different
@@ -53,7 +66,7 @@ function sendHttpRequest(ToUrl,withJson,index) {
           sendHttpResponseToPebble(xhr.status.toString(),index);
         }
     }
-    xhr.open('GET', ToUrl, true);
+    xhr.open(method, ToUrl, true);
     xhr.send(null);
     /*
     $.ajax({
@@ -79,6 +92,7 @@ Pebble.addEventListener('showConfiguration', function() {
   //var url = 'http://127.0.0.1:8080';
   //var url = 'http://1c570efd.ngrok.io';
   var url = 'http://skonagaya.github.io/';
+  //var url = 'http://314035ce.ngrok.io/';
 
   console.log('Showing configuration page: ' + url);
 
@@ -149,13 +163,38 @@ Pebble.addEventListener('webviewclosed', function(e) {
 
 Pebble.addEventListener('ready', function() {
   console.log('PebbleKit JS ready!');
-  if ((localStorage.getItem("array")===null)) {
+  var startFresh = false;
+
+  var localList = localStorage.getItem("array");
+  if (localList === null) {startFresh = true;}
+  else {
+    try { // CHECK FOR LOCAL STORAGE CORRUPTION. HAPPENS IN EMU NOT ON WATCH
+      localList = JSON.parse(localList);
+    } catch(e) {
+      console.log('Local storage is corrupted!')
+      startFresh = true;
+    }
+  }
+  if (startFresh) {
       console.log('localStorage not found. This must be a fresh install!')
       console.log('Letting the pebble know we\'re shooting blanks.');
       sendListToPebble("","update");
   } else {
     var localList = JSON.parse(localStorage.getItem('array'));
     console.log(JSON.stringify(localList));
+
+    for (i = 0; i < localList.length; i++) {
+      if (localList[i]['method'] === undefined) {
+        if (localList[i]['json'] == "") {
+          localList[i]['method'] = "GET";
+        } else {
+          localList[i]['method'] = "POST";
+        }
+      }
+    }
+
+    localStorage.setItem("array", JSON.stringify(localList));
+
     if (!(localList === null)) {
       console.log('Sending data to Pebble');
       console.log(localList['array']);
@@ -181,7 +220,9 @@ Pebble.addEventListener("appmessage",
       sendHttpRequest(
         currentList[selectedIndex]["endpoint"],
         currentList[selectedIndex]["json"],
-        selectedIndex
+        selectedIndex,
+        currentList[selectedIndex]["method"]
+
       );
     }
   }
