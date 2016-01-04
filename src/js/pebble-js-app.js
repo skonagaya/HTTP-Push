@@ -89,10 +89,7 @@ function sendHttpRequest(ToUrl,withJson,index,method) {
 }
 
 Pebble.addEventListener('showConfiguration', function() {
-  //var url = 'http://127.0.0.1:8080';
-  //var url = 'http://1c570efd.ngrok.io';
   var url = 'http://skonagaya.github.io/';
-  //var url = 'http://314035ce.ngrok.io/';
 
   console.log('Showing configuration page: ' + url);
 
@@ -152,7 +149,18 @@ Pebble.addEventListener('webviewclosed', function(e) {
   if (e.response == "") { 
     console.log("Configuration page returned nothing....");
   } else {
-    var configData = JSON.parse(decodeURIComponent(e.response));
+    var configData;
+    try {
+      configData = JSON.parse(decodeURIComponent(e.response));
+    } catch (err){
+      var stringToParse = JSON.stringify(e.response).replace(/%/g,'%25');
+      console.log('Decoding failed');
+      if (stringToParse.indexOf('%') > -1) {
+        configData = JSON.parse(decodeURIComponent(JSON.parse(stringToParse)));
+      } else {
+        configData = JSON.parse('{"array":[]}');
+      }
+    }
     console.log('Configuration page returned: ' + JSON.stringify(configData));
     console.log("Storing localStorage stringified: " + JSON.stringify(configData['array']));
     localStorage.setItem("array", JSON.stringify(configData['array']));
