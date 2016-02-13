@@ -286,7 +286,7 @@ static void update_menu_data(int stringSize) {
   statusList = (char ***) malloc(listSize * sizeof(char**));
   folderSizeList = (int *) malloc(listSize * sizeof(int));
 
-
+  Stack_Deinit(&menuLayerStack);
   Stack_Init(&menuLayerStack,listSize);
   Stack_Push(&menuLayerStack,0);
 
@@ -572,14 +572,14 @@ static void select_callback(struct MenuLayer *s_menu_layer, MenuIndex *cell_inde
     layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
     return;
   }
-  char * currentStatus = statusList[Stack_Top(&menuLayerStack)][cell_index->row];
   if (listSize == 0) {
     layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
   } else if (folderSizeList[Stack_Top(&menuLayerStack)] == 0) {
     text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_FOLDER);
     layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
-  } else if (strstr(currentStatus, "_") != NULL) { // If the status has a '_' char, we know it's a folder
+  } else if (strstr(statusList[Stack_Top(&menuLayerStack)][cell_index->row], "_") != NULL) { // If the status has a '_' char, we know it's a folder
     //Stack_Push()
+    char * currentStatus = statusList[Stack_Top(&menuLayerStack)][cell_index->row];
     if(Stack_Top(&menuLayerStack) == 0) {
       force_back_button(s_menu_window, s_menu_layer);
     }
@@ -608,7 +608,11 @@ static void select_callback(struct MenuLayer *s_menu_layer, MenuIndex *cell_inde
 
 static uint16_t get_sections_count_callback(struct MenuLayer *menulayer, uint16_t section_index, 
                                             void *callback_context) {
-  return folderSizeList[Stack_Top(&menuLayerStack)];
+  int currentIndex = Stack_Top(&menuLayerStack);
+  if (currentIndex == -1) 
+    return 0;
+  else 
+    return folderSizeList[currentIndex];
 }
 
 #ifdef PBL_ROUND
@@ -622,13 +626,19 @@ static int16_t get_cell_height_callback(MenuLayer *menu_layer, MenuIndex *cell_i
 
 static void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, 
                              void *callback_context) {
-  char* name = theList[Stack_Top(&menuLayerStack)][cell_index->row]; //theList TODO
+
+  bool isEmptyFolder = folderSizeList[Stack_Top(&menuLayerStack)]==0;
+  char* name;
+
+  // if the folder's empty, draw nutt'n
+  if (isEmptyFolder)
+    name = "";
+  else 
+    name = theList[Stack_Top(&menuLayerStack)][cell_index->row]; //theList TODO
   //char* name = "Todo\0";
   //APP_LOG(APP_LOG_LEVEL_INFO, "listString: %s", name);  
 
   char * currentStatus = statusList[Stack_Top(&menuLayerStack)][cell_index->row];
-
-
   if (currentStatus != NULL) {
     if (strstr(currentStatus, "_") != NULL) { // If the status has a '_' char, we know it's a folder
 
@@ -653,12 +663,16 @@ static void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *
 
 static void menu_window_load(Window *window) {
 
-  APP_LOG(APP_LOG_LEVEL_INFO, "Loading Window");
-  APP_LOG(APP_LOG_LEVEL_INFO, "listSize: %d", listSize);
-  APP_LOG(APP_LOG_LEVEL_INFO, "listString: %s", listString);  
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Loading Window");
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "listSize: %d", listSize);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "listString: %s", listString); 
+
+  Stack_Init(&menuLayerStack,listSize); 
+
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
 
+  APP_LOG(APP_LOG_LEVEL_INFO, "1Loading Window");
 
   s_menu_layer = menu_layer_create(bounds);
   menu_layer_set_callbacks(s_menu_layer, NULL, (MenuLayerCallbacks){
@@ -667,12 +681,14 @@ static void menu_window_load(Window *window) {
     .draw_row = draw_row_handler,
     .select_click = select_callback
   });
+  APP_LOG(APP_LOG_LEVEL_INFO, "2Loading Window");
 
   menu_layer_set_click_config_onto_window(s_menu_layer, window);
   
   layer_add_child(window_layer, menu_layer_get_layer(s_menu_layer));
   previous_ccp = window_get_click_config_provider(window);
 
+  APP_LOG(APP_LOG_LEVEL_INFO, "3Loading Window");
   s_error_text_layer = text_layer_create((GRect) { .origin = {0, 44}, .size = {bounds.size.w, 60}});
   text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_LIST);
   text_layer_set_font(s_error_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
@@ -682,6 +698,7 @@ static void menu_window_load(Window *window) {
   layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
   layer_add_child(window_layer, text_layer_get_layer(s_error_text_layer));
 
+  APP_LOG(APP_LOG_LEVEL_INFO, "4Loading Window");
   s_loading_text_layer = text_layer_create((GRect) { .origin = {0, 60}, .size = {bounds.size.w, 60}});
   text_layer_set_text(s_loading_text_layer, "LOADING");
   text_layer_set_font(s_loading_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24));
@@ -690,6 +707,7 @@ static void menu_window_load(Window *window) {
   text_layer_set_background_color(s_loading_text_layer, GColorBlack);
   layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
   layer_add_child(window_layer, text_layer_get_layer(s_loading_text_layer));
+  APP_LOG(APP_LOG_LEVEL_INFO, "Window load completed");
 }
 
 static void menu_window_unload(Window *window) {
