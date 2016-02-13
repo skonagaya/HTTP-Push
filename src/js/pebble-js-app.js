@@ -89,29 +89,86 @@ function sendHttpRequest(ToUrl,withJson,index,method) {
 }
 
 Pebble.addEventListener('showConfiguration', function() {
-  var url = 'http://skonagaya.github.io/';
+  //var url = 'http://skonagaya.github.io/';
+  var url = 'http://079337dd.ngrok.io';
 
   console.log('Showing configuration page: ' + url);
 
   Pebble.openURL(url);
 });
 
+function traverseList (nextList) {
+  var currentLevelList = [];
+  for (var i=0; i < nextList.length; i++) {
+    if (nextList[i]["type"] == "request") {
+      currentLevelList.push(nextList[i]["name"]);
+    } else if (nextList[i]["type"] == "folder"){
+      var folderList = traverseList(nextList[i]["list"]);
+      var entry = {}
+      entry[nextList[i]["name"]] = folderList
+      currentLevelList.push(entry);
+    }
+  }
+  return currentLevelList;
+}
+
+function traverseListString (nextList,parentIndex,folderIndex) {
+  var currentLevelList = "";
+  for (var i=0; i < nextList.length; i++) {
+    if (nextList[i]["type"] == "request") {
+
+      currentLevelList =  currentLevelList + "_E"
+                          + "_" + parentIndex 
+                          + "_" + i.toString() 
+                          + "_" + nextList[i]["name"].replace("_","");
+
+    } else if (nextList[i]["type"] == "folder"){
+      folderIndex = folderIndex + 1;
+
+      currentLevelList =  currentLevelList 
+                          + "_F" 
+                          + "_" + nextList[i]["list"].length.toString() 
+                          + "_" + folderIndex 
+                          + "_" + parentIndex 
+                          + "_" + i.toString() 
+                          + "_" + nextList[i]["name"].replace("_","")
+                          + traverseListString(nextList[i]["list"],folderIndex,folderIndex);
+
+    }
+  }
+  return currentLevelList;
+}
+
+function traverseCount (nextList) {
+  var currentLevelCount = 0;
+  for (var i=0; i < nextList.length; i++) {
+    if (nextList[i]["type"] == "folder"){
+      currentLevelCount = currentLevelCount + 1 + traverseCount(nextList[i]["list"]);
+    }
+  }
+  return currentLevelCount;
+
+}
+
 function sendListToPebble(listArray,action) {
   console.log("Preparing to send list to initialize Pebble data");
-  var listToString = "";
-  var i;
 
-  for (i=0; i < listArray.length; i++) {
-    var currentName = listArray[i]["name"].trim().replace(",","");
-    listToString = listToString + currentName + ","
-  }
-  listToString = listToString.substring(0,listToString.length-1);
+
+  //TODO: replace _ with space and replace . with empty character
+  console.log("listArray: " + JSON.stringify(listArray));
+  var listToString = "";
+  var listCount = traverseCount(listArray) + 1;
+
+  console.log("listArray.size = " + listCount.toString());
+
+  var trimmedList = "_F_" + listArray.length.toString() + "_0_-1_-1_Root" +traverseListString(listArray,0,0)+"_";
+  listToString = JSON.stringify(trimmedList).slice(1, -1);
 
   console.log("List has been stringified to " + listToString);
   var dict = {};
   if(listArray.length > 0) {
     dict['KEY_LIST'] = listToString;
-    dict['KEY_SIZE'] = i;
+    dict['KEY_SIZE'] = listCount;
     dict['KEY_RESPONSE'] = "";
     dict['KEY_ACTION'] = action;
   } else {
@@ -154,7 +211,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
       configData = JSON.parse(decodeURIComponent(e.response));
     } catch (err){
       var stringToParse = JSON.stringify(e.response).replace(/%/g,'%25');
-      console.log('Decoding failed');
+      console.log('URL Decode failed');
       if (stringToParse.indexOf('%') > -1) {
         configData = JSON.parse(decodeURIComponent(JSON.parse(stringToParse)));
       } else {
