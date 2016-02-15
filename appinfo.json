@@ -17,7 +17,8 @@
     "KEY_SIZE": 1,
     "KEY_INDEX": 2,
     "KEY_RESPONSE": 3,
-    "KEY_ACTION": 4
+    "KEY_ACTION": 4,
+    "KEY_FOLDER_INDEX": 5
   },
   "resources": {
       "media": [

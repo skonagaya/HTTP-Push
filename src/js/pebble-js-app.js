@@ -1,6 +1,6 @@
 
 
-function sendHttpRequest(ToUrl,withJson,index,method) {
+function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
 
   var xhr = new XMLHttpRequest();
   xhr.timeout = 10000;
@@ -10,7 +10,7 @@ function sendHttpRequest(ToUrl,withJson,index,method) {
         if (xhr.readyState == 4) {
           console.log("Received response from PUT:")
           console.log(JSON.stringify(xhr.responseText));
-          sendHttpResponseToPebble(xhr.status.toString(),index);
+          sendHttpResponseToPebble(xhr.status.toString(),folderIndex,rowIndex);
         }
     }
 
@@ -23,7 +23,7 @@ function sendHttpRequest(ToUrl,withJson,index,method) {
         if (xhr.readyState == 4) {
           console.log("Received response from POST:")
           console.log(JSON.stringify(xhr.responseText));
-          sendHttpResponseToPebble(xhr.status.toString(),index);
+          sendHttpResponseToPebble(xhr.status.toString(),folderIndex,rowIndex);
         }
     }
     var strToJson = JSON.parse(withJson);
@@ -63,11 +63,17 @@ function sendHttpRequest(ToUrl,withJson,index,method) {
         if (xhr.readyState == 4) {
           console.log("Received response from POST:")
           console.log(JSON.stringify(xhr.responseText));
-          sendHttpResponseToPebble(xhr.status.toString(),index);
+          sendHttpResponseToPebble(xhr.status.toString(),folderIndex,rowIndex);
         }
     }
     xhr.open(method, ToUrl, true);
-    xhr.send(null);
+    try {
+      xhr.send(null);  
+    } catch (err) {
+      console.log("Error sending XMLHttpRequest: " + JSON.stringify(err));
+      sendHttpResponseToPebble("0",folderIndex,rowIndex);
+    }
+    
     /*
     $.ajax({
       method: "GET",
@@ -90,7 +96,7 @@ function sendHttpRequest(ToUrl,withJson,index,method) {
 
 Pebble.addEventListener('showConfiguration', function() {
   //var url = 'http://skonagaya.github.io/';
-  var url = 'http://079337dd.ngrok.io';
+  var url = 'http://ebc9c45e.ngrok.io';
 
   console.log('Showing configuration page: ' + url);
 
@@ -112,15 +118,16 @@ function traverseList (nextList) {
   return currentLevelList;
 }
 
-function traverseListString (nextList,parentIndex,folderIndex) {
+function traverseListString (nextList,parentIndex,folderIndex,pebbleTable) {
   var currentLevelList = "";
   for (var i=0; i < nextList.length; i++) {
-    if (nextList[i]["type"] == "request") {
+    if (nextList[i]["type"] == "request" || nextList[i]["type"] === undefined) {
 
       currentLevelList =  currentLevelList + "_E"
                           + "_" + parentIndex 
                           + "_" + i.toString() 
                           + "_" + nextList[i]["name"].replace("_","");
+                          pebbleTable[parentIndex.toString()+i.toString()] = JSON.parse(JSON.stringify(nextList[i]));
 
     } else if (nextList[i]["type"] == "folder"){
       folderIndex = folderIndex + 1;
@@ -132,7 +139,7 @@ function traverseListString (nextList,parentIndex,folderIndex) {
                           + "_" + parentIndex 
                           + "_" + i.toString() 
                           + "_" + nextList[i]["name"].replace("_","")
-                          + traverseListString(nextList[i]["list"],folderIndex,folderIndex);
+                          + traverseListString(nextList[i]["list"],folderIndex,folderIndex,pebbleTable);
 
     }
   }
@@ -153,6 +160,7 @@ function traverseCount (nextList) {
 function sendListToPebble(listArray,action) {
   console.log("Preparing to send list to initialize Pebble data");
 
+  console.log("Creating flat datastructure for pebble mapping")
 
   //TODO: replace _ with space and replace . with empty character
   console.log("listArray: " + JSON.stringify(listArray));
@@ -161,8 +169,13 @@ function sendListToPebble(listArray,action) {
 
   console.log("listArray.size = " + listCount.toString());
 
-  var trimmedList = "_F_" + listArray.length.toString() + "_0_-1_-1_Root" +traverseListString(listArray,0,0)+"_";
+  var pebbleTables = {};
+
+  var trimmedList = "_F_" + listArray.length.toString() + "_0_-1_-1_Root" +traverseListString(listArray,0,0,pebbleTables)+"_";
   listToString = JSON.stringify(trimmedList).slice(1, -1);
+
+  console.log("pebbleTables: " + JSON.stringify(pebbleTables));
+  localStorage.setItem("pebble_tables", JSON.stringify(pebbleTables));
 
   console.log("List has been stringified to " + listToString);
   var dict = {};
@@ -186,13 +199,14 @@ function sendListToPebble(listArray,action) {
     });
 }
 
-function sendHttpResponseToPebble(responseStr,index) {
+function sendHttpResponseToPebble(responseStr,folderIndex,rowIndex) {
   var dict = {};
   dict['KEY_LIST'] = "";
   dict['KEY_SIZE'] = 0;
   dict['KEY_RESPONSE'] = responseStr
   dict['KEY_ACTION'] = "response";
-  dict['KEY_INDEX'] = index;
+  dict['KEY_INDEX'] = rowIndex;
+  dict['KEY_FOLDER_INDEX'] = folderIndex;
   console.log('Sending dict: ' + JSON.stringify(dict));
 
   Pebble.sendAppMessage(dict, function() {
@@ -274,18 +288,22 @@ Pebble.addEventListener('ready', function() {
 
 Pebble.addEventListener("appmessage",
   function(e) {
-    var selectedIndex = parseInt(e.payload["KEY_INDEX"]);
-    console.log("Got a message: ", e.payload["KEY_INDEX"]);
+    var folderIndex = parseInt(e.payload["KEY_FOLDER_INDEX"]);
+    var rowIndex = parseInt(e.payload["KEY_INDEX"]);
+    var selectedIndex = folderIndex.toString() + rowIndex.toString();
+    console.log("Got KEY_FOLDER_INDEX: ", e.payload["KEY_FOLDER_INDEX"]);
+    console.log("Got KEY_INDEX: ", e.payload["KEY_INDEX"]);
     console.log(JSON.stringify(e));
 
-    if (!(localStorage.getItem("array")===null)) {
+    if (!(localStorage.getItem("pebble_tables")===null)) {
       console.log("Found existing list. Loading localStorage:");
-      console.log(localStorage['array']);
-      var currentList = JSON.parse(localStorage['array']);
+      console.log(localStorage['pebble_tables']);
+      var currentList = JSON.parse(localStorage['pebble_tables']);
       sendHttpRequest(
         currentList[selectedIndex]["endpoint"],
         currentList[selectedIndex]["json"],
-        selectedIndex,
+        folderIndex,
+        rowIndex,
         currentList[selectedIndex]["method"]
 
       );
