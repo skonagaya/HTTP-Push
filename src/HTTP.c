@@ -637,34 +637,30 @@ static int16_t get_cell_height_callback(MenuLayer *menu_layer, MenuIndex *cell_i
 
 static void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, 
                              void *callback_context) {
+
   if (listSize == 0) return;
+  
   bool isEmptyFolder = folderSizeList[Stack_Top(&menuLayerStack)]==0;
-  char* name;
 
   // if the folder's empty, draw nutt'n
-  if (isEmptyFolder)
-    name = "";
-  else 
-    name = theList[Stack_Top(&menuLayerStack)][cell_index->row]; //theList TODO
-  //char* name = "Todo\0";
-  //APP_LOG(APP_LOG_LEVEL_INFO, "listString: %s", name);  
+  if (!isEmptyFolder){
+    char* name = theList[Stack_Top(&menuLayerStack)][cell_index->row]; //theList TODO
+    char * currentStatus = statusList[Stack_Top(&menuLayerStack)][cell_index->row];
+    if (currentStatus != NULL) {
+      if (strstr(currentStatus, "_") != NULL) { // If the status has a '_' char, we know it's a folder
 
-  char * currentStatus = statusList[Stack_Top(&menuLayerStack)][cell_index->row];
-  if (currentStatus != NULL) {
-    if (strstr(currentStatus, "_") != NULL) { // If the status has a '_' char, we know it's a folder
+        // Set the status field as "Open Folder"
+        snprintf(s_item_text, sizeof(s_item_text), "%s", "Open Folder");
+      } else { // otherwise it's a request entry
 
-      // Set the status field as "Open Folder"
-      snprintf(s_item_text, sizeof(s_item_text), "%s", "Open Folder");
-    } else { // otherwise it's a request entry
-
-      // Pad the status field with "Status: " + <status of request>
-      snprintf(s_item_text, sizeof(s_item_text), "Status: %s", statusList[Stack_Top(&menuLayerStack)][cell_index->row]);
+        // Pad the status field with "Status: " + <status of request>
+        snprintf(s_item_text, sizeof(s_item_text), "Status: %s", statusList[Stack_Top(&menuLayerStack)][cell_index->row]);
+      }
     }
-  }
 
-  // Using simple space padding between name and s_item_text for appearance of edge-alignment
-  
-  menu_cell_basic_draw(ctx, cell_layer, name, s_item_text, NULL);
+    // Using simple space padding between name and s_item_text for appearance of edge-alignment
+    menu_cell_basic_draw(ctx, cell_layer, name, s_item_text, NULL);
+  }
   
 }
 

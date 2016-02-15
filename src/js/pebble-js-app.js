@@ -95,8 +95,8 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
 }
 
 Pebble.addEventListener('showConfiguration', function() {
-  //var url = 'http://skonagaya.github.io/';
-  var url = 'http://ebc9c45e.ngrok.io';
+  var url = 'http://skonagaya.github.io/';
+  //var url = 'http://ebc9c45e.ngrok.io';
 
   console.log('Showing configuration page: ' + url);
 
