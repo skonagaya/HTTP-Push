@@ -95,8 +95,8 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
 }
 
 Pebble.addEventListener('showConfiguration', function() {
-  var url = 'http://skonagaya.github.io/';
-  //var url = 'http://ebc9c45e.ngrok.io';
+  //var url = 'http://skonagaya.github.io/';
+  var url = 'http://c6a59c4d.ngrok.io';
 
   console.log('Showing configuration page: ' + url);
 
@@ -194,8 +194,12 @@ function sendListToPebble(listArray,action) {
 
   Pebble.sendAppMessage(dict, function() {
       console.log('Successfully sent data to update pebble data');
-    }, function() {
+    }, function(e) {
       console.log('Failed to send data to update pebble data');
+      console.log(JSON.stringify(e));
+    console.log('Unable to deliver message with transactionId='
+      + e.data.transactionId
+      + ' Error is: ' + e.error.message);
     });
 }
 
