@@ -749,7 +749,13 @@ static void init(void) {
   });
   window_stack_push(s_menu_window, false);
   app_message_register_inbox_received(inbox_received_handler);
-  app_message_open(app_message_inbox_size_maximum(), app_message_outbox_size_maximum());
+  //app_message_open(app_message_inbox_size_maximum(), app_message_outbox_size_maximum());
+  APP_LOG(APP_LOG_LEVEL_DEBUG,"Max size for inbox: %u",(int)app_message_inbox_size_maximum());
+  APP_LOG(APP_LOG_LEVEL_DEBUG,"Max size for outbox: %u",(int)app_message_outbox_size_maximum());
+
+  // aplite check
+  //app_message_open(6364, 6364);
+  app_message_open(5000,5000);
 }
 
 static void deinit(void) {
