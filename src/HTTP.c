@@ -471,7 +471,13 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   if (strcmp(listAction, "response")==0){
 
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Received a http response from Phone!");
-    vibes_short_pulse();
+
+    static const uint32_t segments[] = { 30 };
+    VibePattern pat = {
+      .durations = segments,
+      .num_segments = ARRAY_LENGTH(segments),
+    };
+    vibes_enqueue_custom_pattern(pat);
 
     Tuple *response_string = dict_find(iter, KEY_RESPONSE);
     Tuple *array_row_index = dict_find(iter,KEY_INDEX);
