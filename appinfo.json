@@ -18,7 +18,9 @@
     "KEY_INDEX": 2,
     "KEY_RESPONSE": 3,
     "KEY_ACTION": 4,
-    "KEY_FOLDER_INDEX": 5
+    "KEY_FOLDER_INDEX": 5,
+    "KEY_CHUNK_INDEX": 6,
+    "KEY_CHUNK_SIZE": 7
   },
   "resources": {
       "media": [

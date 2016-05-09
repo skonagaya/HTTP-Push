@@ -6,8 +6,20 @@
 #define KEY_RESPONSE 3
 #define KEY_ACTION 4
 #define KEY_FOLDER_INDEX 5
+#define KEY_CHUNK_INDEX 6
+#define KEY_CHUNK_SIZE 7
 
 #define STACK_MAX 100
+
+// Calculate the size of the buffer you require by summing the sizes of all 
+// the keys and values in the larges message the app will handle. 
+// For example, a message containing three integer keys and values will work with a 32 byte buffer size.
+
+// Messages FROM phone contain multiple string values.
+#define MAX_INBOX_BUFFER 1024//54
+
+// Messages TO phone is only an integer (index of call found in phone)
+#define MAX_OUTBOX_BUFFER 32
 
 static Window *s_menu_window;
 static MenuLayer *s_menu_layer;
@@ -27,9 +39,17 @@ static int listSize = 0;
 static bool loaded = false;
 static ClickConfigProvider previous_ccp;
 
+// var for chunking 
+static int currentChunkIndex = 0;
+static char *chunk_buffer = NULL;
+static int listByteSize = 0;
+static int persistentListIndex = 0;
+
 enum {
-  PERSIST_LIST_SIZE, // Persistent storage key for wakeup_id
-  PERSIST_LIST
+  PERSIST_LIST_SIZE,        // number of folders+requests
+  PERSIST_LIST_BYTE_LENGTH, // length in byte of entire list
+  PERSIST_LIST             // the string encompasing the entire list
+
 };
 
 struct Stack {
@@ -168,6 +188,20 @@ static void send_to_phone() {
   app_message_outbox_send();
 }
 
+static void request_next_chunk_from_phone() {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to request next chunk from Phone");
+
+  //if (listSize == 0) return;
+  DictionaryIterator *dict;
+  app_message_outbox_begin(&dict);
+
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Index to send: %d", currentChunkIndex);
+  dict_write_uint8(dict,KEY_CHUNK_INDEX,currentChunkIndex);
+  const uint32_t final_size = dict_write_end(dict);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+  app_message_outbox_send();
+}
+
 static void free_all_data() {
 
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Starting free all procedure");
@@ -264,14 +298,43 @@ static void update_menu_data(int stringSize) {
 
 
   if (stringSize > 0) {
-    char *buf= malloc(255);
-    int readByteSize = persist_read_string(PERSIST_LIST,buf,255);
-    listString = malloc(readByteSize);
-    memcpy(listString,buf,readByteSize);
-    free(buf);
-    buf = NULL;
 
     listSize = persist_read_int(PERSIST_LIST_SIZE);
+    listByteSize = persist_read_int(PERSIST_LIST_BYTE_LENGTH);
+
+    int bytesRemaining = listByteSize;
+    int currentPersistenceIndex = 0;
+
+    if (listString != NULL) {
+      free(listString);
+      listString = NULL;
+    }
+    listString = malloc(listByteSize+1);
+
+    
+
+    while (bytesRemaining > 0) {
+      char *buf= malloc(201);
+
+
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Reading chunk %d from persistent store", currentPersistenceIndex);
+      int readByteSize = persist_read_string(PERSIST_LIST+currentPersistenceIndex,buf,200);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Read: %s", buf);
+      if (currentPersistenceIndex == 0) {
+        strcpy(listString, buf);
+      }
+      else {
+        strcat(listString, buf);
+      }
+      currentPersistenceIndex = currentPersistenceIndex + 1;
+      //memcpy(listString,buf,readByteSize);
+      bytesRemaining = bytesRemaining - 200;
+      free(buf);
+      buf = NULL;
+    }
+    
+    listString[listByteSize] = '\0';
+
 
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Read list from persistent storage: %s", listString);
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Read size (value) from persistent storage: %d", listSize);
@@ -443,11 +506,21 @@ static void update_menu_data(int stringSize) {
   
 }
 
+void chopN(char *str, size_t n)
+{
+    size_t len = strlen(str);
+    if (n > len)
+        return;  // Or: n = len;
+    memmove(str, str+n, len - n + 1);
+}
+
 static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   if (!loaded) {
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
     loaded = true;
   }
+
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Received dict from phone of size: \"%d\"", sizeof(iter));
 
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Pebble received message from Phone!");
 
@@ -495,29 +568,66 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     menu_layer_reload_data(s_menu_layer);
 
 
+  } else if (strcmp(listAction, "chunk")==0) {
+
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Found chunking call");
+
+    char *string_chunk = dict_find(iter, KEY_LIST)->value->cstring; 
+
+    // make sure that buffer is clear before starting new chunking activity
+    if (currentChunkIndex == 0) { 
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Initializing chunk_buffer");
+      if (chunk_buffer != NULL) {
+        free(chunk_buffer);
+        chunk_buffer = NULL;
+      }
+
+      int list_string_length = dict_find(iter, KEY_CHUNK_SIZE)->value->int32;
+      chunk_buffer = (char*)malloc((list_string_length+1) * sizeof(char));
+
+      // Copy the first chunk to chunk buffer
+      strcpy(chunk_buffer, string_chunk);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer strcpy result: %s", chunk_buffer);
+
+    } else {
+      strcat(chunk_buffer, string_chunk);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer strcat result: %s", chunk_buffer);
+    }
+
+    currentChunkIndex = currentChunkIndex + 1;
+    
+    request_next_chunk_from_phone();
 
   } else if (strcmp(listAction, "update")==0) {
+
     free_all_data();
 
-    Tuple *array_size = dict_find(iter,KEY_SIZE);
-    Tuple *array_string = dict_find(iter, KEY_LIST);
+    int array_size = dict_find(iter,KEY_SIZE)->value->int32;;
+    char *array_string = dict_find(iter, KEY_LIST)->value->cstring;
 
-    int size_of_array = 0;
-
-    if (array_size){ size_of_array = array_size->value->int32; }
-
-
-    if (size_of_array > 0 && !layer_get_hidden(text_layer_get_layer(s_error_text_layer))) {
+    if (array_size > 0 && !layer_get_hidden(text_layer_get_layer(s_error_text_layer))) {
 
       text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_LIST);
       layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
     }
 
-    listSize = size_of_array;
+    if (currentChunkIndex > 0) {
+      currentChunkIndex = 0;
+
+      strcat(chunk_buffer, array_string);
+      array_string = chunk_buffer;
+
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer concat result: %s", chunk_buffer);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Updating with array_string: %s", array_string);
+
+      // TODO: append array_string and copy back into array_string then free chunk_buffer
+    }
+
+    listSize = array_size;
       // Check it was found. If not, dict_find() returns NULL
     if(array_string) {
       // Get the length of the string
-      length = strlen(array_string->value->cstring);
+      length = strlen(array_string);
 
       // Free any previous data
       if(s_buffer != NULL) {
@@ -532,26 +642,56 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
       // Copy in the string to the newly allocated buffer
       //strcpy(s_buffer, array_string->value->cstring);
-      memcpy(s_buffer,array_string->value->cstring,(length+1) * sizeof(char));
+      memcpy(s_buffer,array_string,(length+1) * sizeof(char));
 
-
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Size retrieved from phone: %d", size_of_array);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "List length: %d", length);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Size retrieved from phone: %d", array_size);
       APP_LOG(APP_LOG_LEVEL_DEBUG, "List retrieved from phone: %s", s_buffer);
 
       int bytesWritten = 0;
       int bytesSizeWritten = 0;
+      int bytesLengthWritten = 0;
 
-      if (size_of_array == 0) {
+      if (array_size == 0) {
         bytesWritten = persist_write_string(PERSIST_LIST,"");
         bytesSizeWritten = persist_write_int(PERSIST_LIST_SIZE,0);
+        bytesLengthWritten = persist_write_int(PERSIST_LIST_BYTE_LENGTH,0);
+
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing Empty values to persistent store.");
 
       } else {
-        bytesWritten = persist_write_string(PERSIST_LIST,s_buffer);
-        bytesSizeWritten = persist_write_int(PERSIST_LIST_SIZE,size_of_array);
+
+        // write into persistent store 256 bytes at a time
+        int bytesRemaining = length;
+        persistentListIndex = 0; 
+        
+        while (bytesRemaining > 0) {
+
+          //char indexToInt[15];
+          //sprintf(indexToInt, "%d", persistentListIndex);
+
+          char *buf= malloc(201);
+          strncpy(buf, s_buffer, 200);
+          buf[200] = '\0';
+
+          bytesWritten = persist_write_string(PERSIST_LIST + persistentListIndex,buf);
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunked into persistent store: %s", s_buffer);
+          chopN(s_buffer, 200);
+          bytesRemaining = bytesRemaining - 200;
+          persistentListIndex = persistentListIndex + 1;
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list): %d", bytesWritten);
+          free(buf);
+          buf = NULL;
+        }
+
+
+        bytesSizeWritten = persist_write_int(PERSIST_LIST_SIZE,array_size);
+        bytesLengthWritten = persist_write_int(PERSIST_LIST_BYTE_LENGTH,length);
+
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (size): %d", bytesSizeWritten);
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list): %d", bytesWritten);
-        update_menu_data((int)size_of_array);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list_bytes): %d", bytesLengthWritten);
+
+        update_menu_data(array_size);
       }
       menu_layer_reload_data(s_menu_layer);
       if (layer_get_hidden(text_layer_get_layer(s_error_text_layer)) && listString == 0) {
@@ -562,6 +702,11 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
         free(s_buffer);
         s_buffer = NULL;
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
+      }
+      if(chunk_buffer != NULL) {
+        free(chunk_buffer);
+        chunk_buffer = NULL;
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
       }
     }
   }
@@ -755,7 +900,7 @@ static void init(void) {
 
   // aplite check
   //app_message_open(6364, 6364);
-  app_message_open(5000,5000);
+  app_message_open(MAX_INBOX_BUFFER,MAX_OUTBOX_BUFFER);
 }
 
 static void deinit(void) {

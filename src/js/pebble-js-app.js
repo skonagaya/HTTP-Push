@@ -8,24 +8,24 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
   if (method == "PUT"){
     xhr.onreadystatechange = function() {
         if (xhr.readyState == 4) {
-          console.log("Received response from PUT:")
+          console.log("Received response from PUT:");
           console.log(JSON.stringify(xhr.responseText));
           sendHttpResponseToPebble(xhr.status.toString(),folderIndex,rowIndex);
         }
-    }
+    };
 
     xhr.open(method, ToUrl);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.send(withJson);
 
-  } else if (withJson != "") {
+  } else if (withJson !== "") {
     xhr.onreadystatechange = function() {
-        if (xhr.readyState == 4) {
+        if (xhr.readyState === 4) {
           console.log("Received response from POST:")
           console.log(JSON.stringify(xhr.responseText));
           sendHttpResponseToPebble(xhr.status.toString(),folderIndex,rowIndex);
         }
-    }
+    };
     var strToJson = JSON.parse(withJson);
     xhr.open(method, ToUrl, true);
 
@@ -96,7 +96,7 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
 
 Pebble.addEventListener('showConfiguration', function() {
   var url = 'http://skonagaya.github.io/';
-  //var url = 'http://0e661970.ngrok.io';
+  //var url = 'http://9b6ccc25.ngrok.io';
 
   console.log('Showing configuration page: ' + url);
 
@@ -157,14 +157,20 @@ function traverseCount (nextList) {
 
 }
 
+function chunkString(str, length) {
+  return str.match(new RegExp('.{1,' + length + '}', 'g'));
+}
+
+
 function sendListToPebble(listArray,action) {
 
   console.log("Preparing to send list to initialize Pebble data");
-  console.log("Creating flat datastructure for pebble mapping")
+  console.log("Creating flat datastructure for pebble mapping");
 
   //TODO: replace _ with space and replace . with empty character
   console.log("listArray: " + JSON.stringify(listArray));
   var listToString = "";
+  var listToArray = null;
   var listCount = traverseCount(listArray) + 1;
 
   console.log("listArray.size = " + listCount.toString());
@@ -173,29 +179,66 @@ function sendListToPebble(listArray,action) {
 
   var trimmedList = "_F_" + listArray.length.toString() + "_0_-1_-1_Root" +traverseListString(listArray,0,0,pebbleTables)+"_";
   listToString = JSON.stringify(trimmedList).slice(1, -1);
+  listToArray = chunkString(listToString, 50);
 
   console.log("pebbleTables: " + JSON.stringify(pebbleTables));
   localStorage.setItem("pebble_tables", JSON.stringify(pebbleTables));
 
   console.log("List has been stringified to " + listToString);
+  console.log("List has been chunkified to " + JSON.stringify(listToArray));
+  
   var dict = {};
-  if(listArray.length > 0) {
-    dict['KEY_LIST'] = listToString;
-    dict['KEY_SIZE'] = listCount;
-    dict['KEY_RESPONSE'] = "";
-    dict['KEY_ACTION'] = action;
+
+  // If the list is empty, send it to the watch to propagate "empty list error msg"
+
+  if(listArray.length == 0) 
+  {
+
+    dict.KEY_LIST = "";
+    dict.KEY_SIZE = 0;
+    dict.KEY_ACTION = action;
+
+    Pebble.sendAppMessage(dict, function() {
+        console.log('Successfully sent empty list to pebble');
+      }, function(e) {
+        console.log('Failed to send empty list to pebble');
+        console.log(JSON.stringify(e));
+      }
+    );
   } else {
-    dict['KEY_LIST'] = "";
-    dict['KEY_SIZE'] = 0;
-    dict['KEY_RESPONSE'] = "";
-    dict['KEY_ACTION'] = action;
+
+    // default case: no need to chunk, just update pebble now..
+    if (listToArray.length == 1) {
+      console.log('No need to chunk.');
+      sendChunkToPebble (listToString, listCount, 0 , "update");
+    } else {
+      listChunks = listToArray;
+      finalListSize = listCount;
+      sendChunkToPebble (listToArray[0], listCount, listToString.length, "chunk");
+    }
+    
   }
+}
+
+var chunkIndex = 0;
+var listChunks = null;
+var finalListSize = 0;
+var chunkTotalByteSize = 0;
+
+function sendChunkToPebble(listString, listSize, listStringLength, action) {
+  var dict = {};
+
+  dict.KEY_ACTION = action;
+  dict.KEY_LIST = listString;
+  dict.KEY_SIZE = listSize;
+  dict.KEY_CHUNK_SIZE = listStringLength;
+
   console.log('Sending dict: ' + JSON.stringify(dict));
 
   Pebble.sendAppMessage(dict, function() {
-      console.log('Successfully sent data to update pebble data');
+      console.log('Successfully sent empty list to pebble');
     }, function(e) {
-      console.log('Failed to send data to update pebble data');
+      console.log('Failed to send empty list to pebble');
       console.log(JSON.stringify(e));
     }
   );
@@ -205,7 +248,7 @@ function sendHttpResponseToPebble(responseStr,folderIndex,rowIndex) {
   var dict = {};
   dict['KEY_LIST'] = "";
   dict['KEY_SIZE'] = 0;
-  dict['KEY_RESPONSE'] = responseStr
+  dict['KEY_RESPONSE'] = responseStr;
   dict['KEY_ACTION'] = "response";
   dict['KEY_INDEX'] = rowIndex;
   dict['KEY_FOLDER_INDEX'] = folderIndex;
@@ -219,7 +262,7 @@ function sendHttpResponseToPebble(responseStr,folderIndex,rowIndex) {
 }
 
 Pebble.addEventListener('webviewclosed', function(e) {
-  if (e.response == "") { 
+  if (e.response === "") { 
     console.log("Configuration page returned nothing....");
   } else {
     var configData;
@@ -281,7 +324,7 @@ Pebble.addEventListener('ready', function() {
       console.log(localList['array']);
       sendListToPebble(localList,"update");
     } else {
-      console.log('localStorage not found. This must be a fresh install!')
+      console.log('localStorage not found. This must be a fresh install!');
       console.log('Letting the pebble know we\'re shooting blanks.');
       sendListToPebble("","update");
     }
@@ -293,11 +336,22 @@ Pebble.addEventListener("appmessage",
     var folderIndex = parseInt(e.payload["KEY_FOLDER_INDEX"]);
     var rowIndex = parseInt(e.payload["KEY_INDEX"]);
     var selectedIndex = folderIndex.toString() + rowIndex.toString();
+    var pebbleChunkIndex = (parseInt(e.payload["KEY_CHUNK_INDEX"]));
+
     console.log("Got KEY_FOLDER_INDEX: ", e.payload["KEY_FOLDER_INDEX"]);
     console.log("Got KEY_INDEX: ", e.payload["KEY_INDEX"]);
+    console.log("Got KEY_CHUNK_INDEX: ", e.payload["KEY_CHUNK_INDEX"]);
+
     console.log(JSON.stringify(e));
 
-    if (!(localStorage.getItem("pebble_tables")===null)) {
+    if (pebbleChunkIndex != "None") {
+      console.log("were in business");
+      if (listChunks.length-1 == pebbleChunkIndex) { // if last chunk
+        sendChunkToPebble(listChunks[pebbleChunkIndex], finalListSize, 0, "update");
+      } else {
+        sendChunkToPebble(listChunks[pebbleChunkIndex], finalListSize, 0, "chunk");
+      }
+    } else if (!(localStorage.getItem("pebble_tables")===null)) {
       console.log("Found existing list. Loading localStorage:");
       console.log(localStorage['pebble_tables']);
       var currentList = JSON.parse(localStorage['pebble_tables']);
