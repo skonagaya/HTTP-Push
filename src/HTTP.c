@@ -8,8 +8,12 @@
 #define KEY_FOLDER_INDEX 5
 #define KEY_CHUNK_INDEX 6
 #define KEY_CHUNK_SIZE 7
+#define KEY_VERSION 8
+#define KEY_ERROR 9
 
 #define STACK_MAX 100
+
+static const char VERSION[] = "3.1.0";
 
 // Calculate the size of the buffer you require by summing the sizes of all 
 // the keys and values in the larges message the app will handle. 
@@ -38,12 +42,16 @@ static char *listString = NULL;
 static int listSize = 0;
 static bool loaded = false;
 static ClickConfigProvider previous_ccp;
+static DictionaryIterator *dict;
 
 // var for chunking 
 static int currentChunkIndex = 0;
 static char *chunk_buffer = NULL;
 static int listByteSize = 0;
 static int persistentListIndex = 0;
+
+// var for settings
+static int vibrationLength = 100;
 
 enum {
   PERSIST_LIST_SIZE,        // number of folders+requests
@@ -164,7 +172,6 @@ static void send_to_phone() {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing data to send to Phone");
 
   if (listSize == 0) return;
-  DictionaryIterator *dict;
   app_message_outbox_begin(&dict);
 
   int folderIndex = (int) Stack_Top(&menuLayerStack);
@@ -183,7 +190,78 @@ static void send_to_phone() {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Menu index to send: %d", rowIndex);
   dict_write_uint8(dict,KEY_INDEX,rowIndex);
   dict_write_uint8(dict,KEY_FOLDER_INDEX,folderIndex);
+  dict_write_cstring(dict,KEY_ACTION,"response");
   const uint32_t final_size = dict_write_end(dict);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+  app_message_outbox_send();
+}
+
+void chunk_timer_callback(void *data) {
+  AppMessageResult amr; 
+  DictionaryResult dr;
+  amr = app_message_outbox_begin(&dict);
+
+  if(amr == APP_MSG_OK) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_OK");
+
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunk index to send: %d", currentChunkIndex);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_CHUNK_INDEX);
+    dict_write_uint8(dict,KEY_CHUNK_INDEX,currentChunkIndex);
+
+    dr = dict_write_cstring(dict,KEY_ACTION,"chunk");
+    const uint32_t final_size = dict_write_end(dict);
+
+    if (dr == DICT_OK) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_OK");
+    else if (dr == DICT_NOT_ENOUGH_STORAGE) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_NOT_ENOUGH_STORAGE");
+    else if (dr == DICT_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_INVALID_ARGS");
+    
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+    app_message_outbox_send();
+
+  }
+  else if(amr == APP_MSG_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_INVALID_ARGS");
+  else if(amr == APP_MSG_BUSY) 
+  {
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_BUSY"); 
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"Sleeping for 500 milliseconds..."); 
+    app_timer_register(500, chunk_timer_callback, NULL);
+  }
+
+}
+
+static void send_version_to_phone() {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to send version to Phone");
+
+  //if (listSize == 0) return;
+
+
+  app_message_outbox_begin(&dict);
+
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_VERSION);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message version to send: %s", VERSION);
+  dict_write_cstring(dict,KEY_VERSION,VERSION);
+  dict_write_cstring(dict,KEY_ACTION,"version");
+  const uint32_t final_size = dict_write_end(dict);
+
+  
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+  app_message_outbox_send();
+}
+
+static void send_command_error_to_phone (char *cmd) {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to send error to Phone");
+
+  //if (listSize == 0) return;
+
+  app_message_outbox_begin(&dict);
+
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_ERROR);
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message error to send: %s", cmd);
+  dict_write_cstring(dict,KEY_ERROR,cmd);
+  dict_write_cstring(dict,KEY_ACTION,"error");
+  const uint32_t final_size = dict_write_end(dict);
+
+  
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
   app_message_outbox_send();
 }
@@ -192,14 +270,35 @@ static void request_next_chunk_from_phone() {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to request next chunk from Phone");
 
   //if (listSize == 0) return;
-  DictionaryIterator *dict;
-  app_message_outbox_begin(&dict);
 
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Index to send: %d", currentChunkIndex);
-  dict_write_uint8(dict,KEY_CHUNK_INDEX,currentChunkIndex);
-  const uint32_t final_size = dict_write_end(dict);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
-  app_message_outbox_send();
+  AppMessageResult amr; 
+  DictionaryResult dr;
+
+  amr = app_message_outbox_begin(&dict);
+
+  if(amr == APP_MSG_OK) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_OK");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunk index to send: %d", currentChunkIndex);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_CHUNK_INDEX);
+    dict_write_uint8(dict,KEY_CHUNK_INDEX,currentChunkIndex);
+    dr = dict_write_cstring(dict,KEY_ACTION,"chunk");
+    const uint32_t final_size = dict_write_end(dict);
+
+    if (dr == DICT_OK) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_OK");
+    else if (dr == DICT_NOT_ENOUGH_STORAGE) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_NOT_ENOUGH_STORAGE");
+    else if (dr == DICT_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_INVALID_ARGS");
+    
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+    app_message_outbox_send();
+  }
+  else if(amr == APP_MSG_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_INVALID_ARGS");
+  else if(amr == APP_MSG_BUSY) 
+  {
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_BUSY"); 
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"Sleeping for 500 milliseconds..."); 
+    app_timer_register(500, chunk_timer_callback, NULL);
+  }
+
 }
 
 static void free_all_data() {
@@ -293,8 +392,18 @@ static char * extract_between(const char *str, const char *p1, const char *p2)
 static void update_menu_data(int stringSize) {
 
   //free_all_data();
+  layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
+  loaded = false;
 
-  if (stringSize == 0) {return;}
+  menu_layer_reload_data(s_menu_layer);
+
+  if (stringSize == 0) {
+
+    layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+    loaded = true;
+    menu_layer_reload_data(s_menu_layer);
+    return;
+  }
 
 
   if (stringSize > 0) {
@@ -363,6 +472,7 @@ static void update_menu_data(int stringSize) {
   //Assumes the following format
   //_F_<Folder Size>_<Folder Index>_<Parent Folder Index>_<Row Index>_<Folder Name>
   //_E_<Parent Folder Index>_<Entry Row Index>_<Entry Name>
+  //_V_<Vibration_Length>
   while (startsWith(listString, "_") && parseSuccessful) {
     parseSuccessful = false;
     if (startsWith(listString, "_F")) {
@@ -455,6 +565,17 @@ static void update_menu_data(int stringSize) {
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Doublechecking statusList[%d][%d]: %s",parentIndex,entryRow,statusList[parentIndex][entryRow]);
 
       parseSuccessful = true;
+    } else if (startsWith(listString, "_V")) {
+      chopStringBy(listString,2);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+
+      char * vibrationLengthStr = extract_between(listString,"_","_");
+      vibrationLength    = atoi(vibrationLengthStr);
+      chopStringBy(listString,1+ strlen(vibrationLengthStr));
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) vibtrationLengthInt %d",vibrationLength);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(vibrationLengthStr) %d",strlen(vibrationLengthStr));
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+
     }
     if (!parseSuccessful) {
       APP_LOG(APP_LOG_LEVEL_DEBUG, "...nothing more to do...");
@@ -479,6 +600,11 @@ static void update_menu_data(int stringSize) {
     }
   }
   APP_LOG(APP_LOG_LEVEL_DEBUG, "update_menu_data completed");
+
+  layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+  loaded = true;
+
+  menu_layer_reload_data(s_menu_layer);
   /*
 
   char * pch = NULL;
@@ -545,7 +671,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Received a http response from Phone!");
 
-    static const uint32_t segments[] = { 30 };
+    uint32_t segments[] = { vibrationLength };
     VibePattern pat = {
       .durations = segments,
       .num_segments = ARRAY_LENGTH(segments),
@@ -576,6 +702,10 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
   } else if (strcmp(listAction, "chunk")==0) {
 
+
+    layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
+    loaded = false;
+
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Found chunking call");
 
     char *string_chunk = dict_find(iter, KEY_LIST)->value->cstring; 
@@ -604,7 +734,12 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     
     request_next_chunk_from_phone();
 
+  } else if (strcmp(listAction, "version")==0) {
+    send_version_to_phone();
   } else if (strcmp(listAction, "update")==0) {
+
+    layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
+    loaded = false;
 
     free_all_data();
 
@@ -667,7 +802,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
       } else {
 
-        // write into persistent store 256 bytes at a time
+        // write into persistent store 200 bytes at a time
         int bytesRemaining = length;
         persistentListIndex = 0; 
         
@@ -714,7 +849,14 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
         chunk_buffer = NULL;
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
       }
+
+
+      layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+      loaded = true;
+      menu_layer_reload_data(s_menu_layer);
     }
+  } else {
+    send_command_error_to_phone(listAction);
   }
   if (listAction != NULL){
     free(listAction);
@@ -756,6 +898,7 @@ static void select_callback(struct MenuLayer *s_menu_layer, MenuIndex *cell_inde
     reset_menu_index(s_menu_layer,0);
     menu_layer_reload_data(s_menu_layer);
     free(stringcopy);
+    stringcopy = NULL;
 
     // Check if we're now in a folder that's empty. If we are, then show error
     if (folderSizeList[Stack_Top(&menuLayerStack)] == 0) {
@@ -875,11 +1018,8 @@ static void menu_window_unload(Window *window) {
 
 
 static void init(void) {
-  if (persist_exists(PERSIST_LIST_SIZE)){
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Found presistent store. Loading into memory.");
-    update_menu_data(0);
-    //persist_delete(PERSIST_LIST_SIZE);
-  }
+
+  APP_LOG(APP_LOG_LEVEL_DEBUG,"INITIALIZING...");
 
 /*
   if (listSize > 0) {
@@ -907,6 +1047,30 @@ static void init(void) {
   // aplite check
   //app_message_open(6364, 6364);
   app_message_open(MAX_INBOX_BUFFER,MAX_OUTBOX_BUFFER);
+  if (persist_exists(PERSIST_LIST_SIZE)){
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Found presistent store. Loading into memory.");
+    int tempSize = persist_read_int(PERSIST_LIST_SIZE);
+    update_menu_data(tempSize);
+    //persist_delete(PERSIST_LIST_SIZE);
+
+    if(s_buffer != NULL) {
+      free(s_buffer);
+      s_buffer = NULL;
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
+    }
+    if(chunk_buffer != NULL) {
+      free(chunk_buffer);
+      chunk_buffer = NULL;
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
+    }
+  }
+    if (layer_get_hidden(text_layer_get_layer(s_error_text_layer)) && listString == 0) {
+      text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_LIST);
+      layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
+    }
+    layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+    loaded = true;
+    menu_layer_reload_data(s_menu_layer);
 }
 
 static void deinit(void) {

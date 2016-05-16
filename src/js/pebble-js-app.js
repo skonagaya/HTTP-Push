@@ -95,8 +95,10 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
 }
 
 Pebble.addEventListener('showConfiguration', function() {
-  var url = 'http://skonagaya.github.io/';
-  //var url = 'http://9b6ccc25.ngrok.io';
+  ///var url = 'http://skonagaya.github.io/';
+  var url = 'http://5aa05030.ngrok.io';
+
+  if (getLocalVersion() == '') url = url + "/downgrade/";
 
   console.log('Showing configuration page: ' + url);
 
@@ -118,19 +120,39 @@ function traverseList (nextList) {
   return currentLevelList;
 }
 
-function traverseListString (nextList,parentIndex,folderIndex,pebbleTable) {
+
+function getLocalVersion() {
+  var localList = localStorage.getItem("version");
+  var version = '';
+  if (localList !== null) {
+    version = localList;
+  }
+  return version;
+}
+
+function traverseListString (nextList,folderIndex) {
+  
   var currentLevelList = "";
+  var parentIndex = folderIndex;
+
   for (var i=0; i < nextList.length; i++) {
     if (nextList[i]["type"] == "request" || nextList[i]["type"] === undefined) {
+      console.log("Found request type");
+
+      console.log("parentIndex.toString()+i.toString(): " + parentIndex.toString()+i.toString());
+      console.log("JSON.stringify(nextList[i]): " + (JSON.stringify(nextList[i])));
 
       currentLevelList =  currentLevelList + "_E"
                           + "_" + parentIndex 
                           + "_" + i.toString() 
                           + "_" + nextList[i]["name"].replace("_","");
-                          pebbleTable[parentIndex.toString()+i.toString()] = JSON.parse(JSON.stringify(nextList[i]));
+                          pebbleTables[parentIndex.toString()+i.toString()] = JSON.parse(JSON.stringify(nextList[i]));
 
     } else if (nextList[i]["type"] == "folder"){
       folderIndex = folderIndex + 1;
+      var nextLevelData = traverseListString(nextList[i]["list"],folderIndex);
+      var nextLevelString = nextLevelData[0];
+      var nextIndexAfterFolderTraversal = nextLevelData[1];
 
       currentLevelList =  currentLevelList 
                           + "_F" 
@@ -139,11 +161,13 @@ function traverseListString (nextList,parentIndex,folderIndex,pebbleTable) {
                           + "_" + parentIndex 
                           + "_" + i.toString() 
                           + "_" + nextList[i]["name"].replace("_","")
-                          + traverseListString(nextList[i]["list"],folderIndex,folderIndex,pebbleTable);
+                          + nextLevelString;
+
+      folderIndex = nextIndexAfterFolderTraversal;
 
     }
   }
-  return currentLevelList;
+  return [currentLevelList,folderIndex];
 }
 
 function traverseCount (nextList) {
@@ -162,6 +186,8 @@ function chunkString(str, length) {
 }
 
 
+var pebbleTables = {};
+
 function sendListToPebble(listArray,action) {
 
   console.log("Preparing to send list to initialize Pebble data");
@@ -175,9 +201,14 @@ function sendListToPebble(listArray,action) {
 
   console.log("listArray.size = " + listCount.toString());
 
-  var pebbleTables = {};
+  pebbleTables = {};
 
-  var trimmedList = "_F_" + listArray.length.toString() + "_0_-1_-1_Root" +traverseListString(listArray,0,0,pebbleTables)+"_";
+  var trimmedList = "_F_" + listArray.length.toString() + "_0_-1_-1_Root" +traverseListString(listArray,0,0)[0]+"_";
+  if (getLocalVersion() != "") {
+    var vibrationStr = JSON.parse(localStorage.getItem("settings"))["vibration"].toString();
+    console.log("Adding vibration String: "+vibrationStr);
+    trimmedList = trimmedList + "V_"+vibrationStr+"_";
+  }
   listToString = JSON.stringify(trimmedList).slice(1, -1);
   listToArray = chunkString(listToString, 50);
 
@@ -278,8 +309,12 @@ Pebble.addEventListener('webviewclosed', function(e) {
       }
     }
     console.log('Configuration page returned: ' + JSON.stringify(configData));
-    console.log("Storing localStorage stringified: " + JSON.stringify(configData['array']));
+    console.log("Storing localStorage array stringified: " + JSON.stringify(configData['array']));
     localStorage.setItem("array", JSON.stringify(configData['array']));
+    if (getLocalVersion() != '') {
+      console.log("Storing localStorage settings stringified: " + JSON.stringify(configData['settings']));
+      localStorage.setItem("settings", JSON.stringify(configData['settings']));
+    }
 
     sendListToPebble(configData['array'],"update");
   }
@@ -322,35 +357,67 @@ Pebble.addEventListener('ready', function() {
     if (!(localList === null)) {
       console.log('Sending data to Pebble');
       console.log(localList['array']);
-      sendListToPebble(localList,"update");
+      //sendListToPebble(localList,"update"); // LOAD INITIAL DATA (causes pull to pebble every time started)
     } else {
       console.log('localStorage not found. This must be a fresh install!');
       console.log('Letting the pebble know we\'re shooting blanks.');
-      sendListToPebble("","update");
+      //sendListToPebble("","update");
     }
   }
+  getPebbleAppVersion();
+
 });
+
+function getPebbleAppVersion() {
+  console.log("Retreiving app version from Pebble");
+  var dict = {};
+  dict.KEY_LIST = "";
+  dict.KEY_SIZE = 0;
+  dict.KEY_ACTION = "version";
+  Pebble.sendAppMessage(dict, function() {
+      console.log('Successfully sent empty list to pebble');
+    }, function(e) {
+      console.log('Failed to send empty list to pebble');
+      console.log(JSON.stringify(e));
+    }
+  );
+}
 
 Pebble.addEventListener("appmessage",
   function(e) {
+    console.log("Got KEY_FOLDER_INDEX: "+ e.payload["KEY_FOLDER_INDEX"]);
+    console.log("Got KEY_INDEX: "+ e.payload["KEY_INDEX"]);
+    console.log("Got KEY_CHUNK_INDEX: "+ e.payload["KEY_CHUNK_INDEX"]);
+    console.log("Got KEY_ACTION: "+ e.payload["KEY_ACTION"]);
+    console.log("Got KEY_ERROR: "+ e.payload["KEY_ERROR"]);
+    console.log("Got KEY_VERSION: "+ e.payload["KEY_VERSION"]);
+
+    var action = e.payload["KEY_ACTION"];
     var folderIndex = parseInt(e.payload["KEY_FOLDER_INDEX"]);
     var rowIndex = parseInt(e.payload["KEY_INDEX"]);
     var selectedIndex = folderIndex.toString() + rowIndex.toString();
     var pebbleChunkIndex = (parseInt(e.payload["KEY_CHUNK_INDEX"]));
-
-    console.log("Got KEY_FOLDER_INDEX: ", e.payload["KEY_FOLDER_INDEX"]);
-    console.log("Got KEY_INDEX: ", e.payload["KEY_INDEX"]);
-    console.log("Got KEY_CHUNK_INDEX: ", e.payload["KEY_CHUNK_INDEX"]);
+    var version = e.payload["KEY_VERSION"];
 
     console.log(JSON.stringify(e));
 
-    if (pebbleChunkIndex != "None") {
-      console.log("were in business");
+    if (pebbleChunkIndex == undefined) { console.log("==");}
+    if (pebbleChunkIndex != undefined) { console.log("!=");}
+    if (pebbleChunkIndex === undefined) { console.log("===");}
+    if (pebbleChunkIndex !== undefined) { console.log("!==");}
+
+    if (action == "chunk") {
+      console.log("Received chunking message from Pebble");
+      console.log("Using listChunks: " + JSON.stringify(listChunks));
       if (listChunks.length-1 == pebbleChunkIndex) { // if last chunk
         sendChunkToPebble(listChunks[pebbleChunkIndex], finalListSize, 0, "update");
       } else {
         sendChunkToPebble(listChunks[pebbleChunkIndex], finalListSize, 0, "chunk");
       }
+    } else if (action == "version") {
+      console.log("Received version message from Pebble");
+      console.log("Setting localStorage version to " + version);
+      localStorage.setItem("version", version);
     } else if (!(localStorage.getItem("pebble_tables")===null)) {
       console.log("Found existing list. Loading localStorage:");
       console.log(localStorage['pebble_tables']);

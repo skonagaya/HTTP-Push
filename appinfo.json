@@ -20,7 +20,9 @@
     "KEY_ACTION": 4,
     "KEY_FOLDER_INDEX": 5,
     "KEY_CHUNK_INDEX": 6,
-    "KEY_CHUNK_SIZE": 7
+    "KEY_CHUNK_SIZE": 7,
+    "KEY_VERSION": 8,
+    "KEY_ERROR": 9
   },
   "resources": {
       "media": [
