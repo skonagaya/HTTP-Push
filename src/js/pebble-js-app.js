@@ -19,6 +19,8 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
     xhr.send(withJson);
 
   } else if (withJson !== "") {
+
+    // METHOD JSON POST
     xhr.onreadystatechange = function() {
         if (xhr.readyState === 4) {
           console.log("Received response from POST:")
@@ -61,12 +63,14 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
   } else {
     xhr.onreadystatechange = function() {
         if (xhr.readyState == 4) {
-          console.log("Received response from POST:")
+          console.log("Received response from GET:")
           console.log(JSON.stringify(xhr.responseText));
           sendHttpResponseToPebble(xhr.status.toString(),folderIndex,rowIndex);
         }
     }
     xhr.open(method, ToUrl, true);
+    console.log("Using method: " + method);
+    console.log("Using ToUrl: " + ToUrl);
     try {
       xhr.send(null);  
     } catch (err) {
@@ -95,10 +99,10 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
 }
 
 Pebble.addEventListener('showConfiguration', function() {
-  ///var url = 'http://skonagaya.github.io/';
-  var url = 'http://5aa05030.ngrok.io';
+  var url = 'http://skonagaya.github.io';
+  //var url = 'http://127.0.0.1:8080';
 
-  if (getLocalVersion() == '') url = url + "/downgrade/";
+  if (getLocalVersion() != '') url = url + "/upgrade/";
 
   console.log('Showing configuration page: ' + url);
 
@@ -127,6 +131,7 @@ function getLocalVersion() {
   if (localList !== null) {
     version = localList;
   }
+  console.log("getLocalVersion returned: \""+version+"\"");
   return version;
 }
 
@@ -204,10 +209,13 @@ function sendListToPebble(listArray,action) {
   pebbleTables = {};
 
   var trimmedList = "_F_" + listArray.length.toString() + "_0_-1_-1_Root" +traverseListString(listArray,0,0)[0]+"_";
-  if (getLocalVersion() != "") {
+  if (getLocalVersion() != "" && localStorage.getItem("settings") !== null) {
+    if (localStorage.getItem("settings")["vibration"] !== null && localStorage.getItem("settings")["vibration"] !== undefined){
+
     var vibrationStr = JSON.parse(localStorage.getItem("settings"))["vibration"].toString();
     console.log("Adding vibration String: "+vibrationStr);
     trimmedList = trimmedList + "V_"+vibrationStr+"_";
+    }
   }
   listToString = JSON.stringify(trimmedList).slice(1, -1);
   listToArray = chunkString(listToString, 50);
