@@ -55,8 +55,9 @@ static int vibrationLength = 100;
 
 enum {
   PERSIST_LIST_SIZE,        // number of folders+requests
+  PERSIST_LIST,             // the string encompasing the entire list
   PERSIST_LIST_BYTE_LENGTH, // length in byte of entire list
-  PERSIST_LIST             // the string encompasing the entire list
+  PERSIST_VERSION
 
 };
 
@@ -795,6 +796,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
       if (array_size == 0) {
         bytesWritten = persist_write_string(PERSIST_LIST,"");
+        bytesWritten = persist_write_string(PERSIST_VERSION,VERSION);
         bytesSizeWritten = persist_write_int(PERSIST_LIST_SIZE,0);
         bytesLengthWritten = persist_write_int(PERSIST_LIST_BYTE_LENGTH,0);
 
@@ -819,10 +821,11 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
           APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunked into persistent store: %s", s_buffer);
           chopN(s_buffer, 200);
           bytesRemaining = bytesRemaining - 200;
-          persistentListIndex = persistentListIndex + 1;
+          persistentListIndex = persistentListIndex + 16;
           APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list): %d", bytesWritten);
           free(buf);
           buf = NULL;
+          bytesWritten = persist_write_string(PERSIST_VERSION,VERSION);
         }
 
 
@@ -1021,17 +1024,15 @@ static void init(void) {
 
   APP_LOG(APP_LOG_LEVEL_DEBUG,"INITIALIZING...");
 
-/*
-  if (listSize > 0) {
-    if (statusList != NULL) {
-      free (statusList);
-      statusList = NULL;
-    }
-    statusList =  malloc(listSize * sizeof(char*));
-    for (int i = 0; i < listSize; ++i) {
-      statusList[activeFolderIndex][i] = "Ready";
-    }
-  }
+  /*
+  APP_LOG(APP_LOG_LEVEL_DEBUG,"DELETING!");
+  
+  persist_delete(PERSIST_LIST_SIZE);
+  persist_delete(PERSIST_LIST);
+  persist_delete(PERSIST_LIST_BYTE_LENGTH);
+  persist_delete(PERSIST_VERSION);
+
+  return;
 */
   s_menu_window = window_create();
   window_set_window_handlers(s_menu_window, (WindowHandlers){
@@ -1047,22 +1048,27 @@ static void init(void) {
   // aplite check
   //app_message_open(6364, 6364);
   app_message_open(MAX_INBOX_BUFFER,MAX_OUTBOX_BUFFER);
-  if (persist_exists(PERSIST_LIST_SIZE)){
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Found presistent store. Loading into memory.");
-    int tempSize = persist_read_int(PERSIST_LIST_SIZE);
-    update_menu_data(tempSize);
-    //persist_delete(PERSIST_LIST_SIZE);
+  if (persist_exists(PERSIST_VERSION)) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store found. Assuming version post-3.1");
+    if (persist_exists(PERSIST_LIST_SIZE)){
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Found presistent store. Loading into memory.");
+      int tempSize = persist_read_int(PERSIST_LIST_SIZE);
+      update_menu_data(tempSize);
+      //persist_delete(PERSIST_LIST_SIZE);
 
-    if(s_buffer != NULL) {
-      free(s_buffer);
-      s_buffer = NULL;
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
+      if(s_buffer != NULL) {
+        free(s_buffer);
+        s_buffer = NULL;
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
+      }
+      if(chunk_buffer != NULL) {
+        free(chunk_buffer);
+        chunk_buffer = NULL;
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
+      }
     }
-    if(chunk_buffer != NULL) {
-      free(chunk_buffer);
-      chunk_buffer = NULL;
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
-    }
+  } else {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store empty. Assuming version pre-3.1");
   }
     if (layer_get_hidden(text_layer_get_layer(s_error_text_layer)) && listString == 0) {
       text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_LIST);

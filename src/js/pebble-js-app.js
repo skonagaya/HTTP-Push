@@ -101,6 +101,7 @@ function sendHttpRequest(ToUrl,withJson,folderIndex,rowIndex,method) {
 Pebble.addEventListener('showConfiguration', function() {
   var url = 'http://skonagaya.github.io';
   //var url = 'http://127.0.0.1:8080';
+  //var url = 'http://5fa77084.ngrok.io';
 
   if (getLocalVersion() != '') url = url + "/upgrade/";
 
@@ -210,7 +211,8 @@ function sendListToPebble(listArray,action) {
 
   var trimmedList = "_F_" + listArray.length.toString() + "_0_-1_-1_Root" +traverseListString(listArray,0,0)[0]+"_";
   if (getLocalVersion() != "" && localStorage.getItem("settings") !== null) {
-    if (localStorage.getItem("settings")["vibration"] !== null && localStorage.getItem("settings")["vibration"] !== undefined){
+    console.log("Aint here");
+    if (localStorage.getItem("settings")["vibration"] !== null){
 
     var vibrationStr = JSON.parse(localStorage.getItem("settings"))["vibration"].toString();
     console.log("Adding vibration String: "+vibrationStr);
