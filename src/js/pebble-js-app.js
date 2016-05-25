@@ -251,11 +251,11 @@ function sendListToPebble(listArray,action) {
     // default case: no need to chunk, just update pebble now..
     if (listToArray.length == 1) {
       console.log('No need to chunk.');
-      sendChunkToPebble (listToString, listCount, 0 , "update");
+      sendChunkToPebble (listToString, listCount, unescape(encodeURIComponent(listToString)).length , "update");
     } else {
       listChunks = listToArray;
       finalListSize = listCount;
-      sendChunkToPebble (listToArray[0], listCount, listToString.length, "chunk");
+      sendChunkToPebble (listToArray[0], listCount, unescape(encodeURIComponent(listToString)).length, "chunk");
     }
     
   }
@@ -332,6 +332,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
 
 Pebble.addEventListener('ready', function() {
   console.log('PebbleKit JS ready!');
+  console.log('Version: 3.1!');
   var startFresh = false;
 
   var localList = localStorage.getItem("array");

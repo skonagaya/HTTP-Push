@@ -27,10 +27,11 @@ static const char VERSION[] = "3.1.0";
 
 static Window *s_menu_window;
 static MenuLayer *s_menu_layer;
-static TextLayer *s_error_text_layer, *s_loading_text_layer;
+static TextLayer *s_error_text_layer, *s_loading_text_layer, *s_upgrade_text_layer;
 
 static const char *MSG_ERR_EMPTY_FOLDER = "Folder is empty.";
 static const char *MSG_ERR_EMPTY_LIST = "Call list is empty!\nConfigure requests on your phone.";
+static const char *MSG_ERR_UPGRADE_VERSION = "NEW VERSION DETECTED\nResend requests from your phone.";
 
 static char s_item_text[32];
 static char *s_buffer = NULL;
@@ -54,10 +55,11 @@ static int persistentListIndex = 0;
 static int vibrationLength = 100;
 
 enum {
+  PERSIST_LIST,
   PERSIST_LIST_SIZE,        // number of folders+requests
-  PERSIST_LIST,             // the string encompasing the entire list
   PERSIST_LIST_BYTE_LENGTH, // length in byte of entire list
-  PERSIST_VERSION
+  PERSIST_VERSION_3_0,
+  PERSIST_VERSION_3_1
 
 };
 
@@ -322,7 +324,7 @@ static void free_all_data() {
   }
 
   if (theList != NULL){
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "ynot?");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Attempting to free list matrix?");
     if (listSize != 0) {
       for (int o=0; o < listSize; o++){
         for (int i=0; i < folderSizeList[o]; i++){
@@ -424,11 +426,11 @@ static void update_menu_data(int stringSize) {
     
 
     while (bytesRemaining > 0) {
-      char *buf= malloc(201);
+      char *buf= malloc(PERSIST_DATA_MAX_LENGTH);
 
 
       APP_LOG(APP_LOG_LEVEL_DEBUG, "Reading chunk %d from persistent store", currentPersistenceIndex);
-      int readByteSize = persist_read_string(PERSIST_LIST+currentPersistenceIndex,buf,200);
+      int readByteSize = persist_read_string(PERSIST_LIST+currentPersistenceIndex,buf,PERSIST_DATA_MAX_LENGTH);
       APP_LOG(APP_LOG_LEVEL_DEBUG, "Read: %s", buf);
       if (currentPersistenceIndex == 0) {
         strcpy(listString, buf);
@@ -436,9 +438,9 @@ static void update_menu_data(int stringSize) {
       else {
         strcat(listString, buf);
       }
-      currentPersistenceIndex = currentPersistenceIndex + 1;
+      currentPersistenceIndex = currentPersistenceIndex - 1;
       //memcpy(listString,buf,readByteSize);
-      bytesRemaining = bytesRemaining - 200;
+      bytesRemaining = bytesRemaining - PERSIST_DATA_MAX_LENGTH;
       free(buf);
       buf = NULL;
     }
@@ -714,12 +716,16 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     // make sure that buffer is clear before starting new chunking activity
     if (currentChunkIndex == 0) { 
       APP_LOG(APP_LOG_LEVEL_DEBUG, "Initializing chunk_buffer");
+
+
+      int list_string_length = dict_find(iter, KEY_CHUNK_SIZE)->value->int32;
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "list_string_length is : %d", list_string_length);
+
       if (chunk_buffer != NULL) {
         free(chunk_buffer);
         chunk_buffer = NULL;
       }
 
-      int list_string_length = dict_find(iter, KEY_CHUNK_SIZE)->value->int32;
       chunk_buffer = (char*)malloc((list_string_length+1) * sizeof(char));
 
       // Copy the first chunk to chunk buffer
@@ -742,10 +748,12 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
     loaded = false;
 
-    free_all_data();
-
     int array_size = dict_find(iter,KEY_SIZE)->value->int32;;
     char *array_string = dict_find(iter, KEY_LIST)->value->cstring;
+
+    listSize = array_size;
+
+    free_all_data();
 
     if (array_size > 0 && !layer_get_hidden(text_layer_get_layer(s_error_text_layer))) {
 
@@ -763,11 +771,11 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
       APP_LOG(APP_LOG_LEVEL_DEBUG, "Updating with array_string: %s", array_string);
 
       // TODO: append array_string and copy back into array_string then free chunk_buffer
-    }
+    } 
 
-    listSize = array_size;
       // Check it was found. If not, dict_find() returns NULL
     if(array_string) {
+      
       // Get the length of the string
       length = strlen(array_string);
 
@@ -796,7 +804,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
       if (array_size == 0) {
         bytesWritten = persist_write_string(PERSIST_LIST,"");
-        bytesWritten = persist_write_string(PERSIST_VERSION,VERSION);
+        bytesWritten = persist_write_string(PERSIST_VERSION_3_1,VERSION);
         bytesSizeWritten = persist_write_int(PERSIST_LIST_SIZE,0);
         bytesLengthWritten = persist_write_int(PERSIST_LIST_BYTE_LENGTH,0);
 
@@ -804,7 +812,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
       } else {
 
-        // write into persistent store 200 bytes at a time
+        // write into persistent store PERSIST_DATA_MAX_LENGTH - 1 bytes at a time
         int bytesRemaining = length;
         persistentListIndex = 0; 
         
@@ -813,19 +821,19 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
           //char indexToInt[15];
           //sprintf(indexToInt, "%d", persistentListIndex);
 
-          char *buf= malloc(201);
-          strncpy(buf, s_buffer, 200);
-          buf[200] = '\0';
+          char *buf= malloc(PERSIST_DATA_MAX_LENGTH - 1);
+          strncpy(buf, s_buffer, PERSIST_DATA_MAX_LENGTH - 1);
+          //buf[PERSIST_DATA_MAX_LENGTH - 1] = '\0';
 
           bytesWritten = persist_write_string(PERSIST_LIST + persistentListIndex,buf);
           APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunked into persistent store: %s", s_buffer);
-          chopN(s_buffer, 200);
-          bytesRemaining = bytesRemaining - 200;
-          persistentListIndex = persistentListIndex + 16;
+          chopN(s_buffer, PERSIST_DATA_MAX_LENGTH - 1);
+          bytesRemaining = bytesRemaining - PERSIST_DATA_MAX_LENGTH - 1;
+          persistentListIndex = persistentListIndex - 1;
           APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list): %d", bytesWritten);
           free(buf);
           buf = NULL;
-          bytesWritten = persist_write_string(PERSIST_VERSION,VERSION);
+          bytesWritten = persist_write_string(PERSIST_VERSION_3_1,VERSION);
         }
 
 
@@ -879,6 +887,13 @@ static void select_callback(struct MenuLayer *s_menu_layer, MenuIndex *cell_inde
     layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
     return;
   }
+
+  if (!layer_get_hidden(text_layer_get_layer(s_upgrade_text_layer))) {
+    layer_set_hidden(text_layer_get_layer(s_upgrade_text_layer), true);
+    return;
+  }
+
+
   if (listSize == 0) {
     layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
   } else if (folderSizeList[Stack_Top(&menuLayerStack)] == 0) {
@@ -1000,6 +1015,15 @@ static void menu_window_load(Window *window) {
   layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
   layer_add_child(window_layer, text_layer_get_layer(s_error_text_layer));
 
+  s_upgrade_text_layer = text_layer_create((GRect) { .origin = {0, 44}, .size = {bounds.size.w, 60}});
+  text_layer_set_text(s_upgrade_text_layer, MSG_ERR_UPGRADE_VERSION);
+  text_layer_set_font(s_upgrade_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+  text_layer_set_text_alignment(s_upgrade_text_layer, GTextAlignmentCenter);
+  text_layer_set_text_color(s_upgrade_text_layer, GColorWhite);
+  text_layer_set_background_color(s_upgrade_text_layer, GColorBlack);
+  layer_set_hidden(text_layer_get_layer(s_upgrade_text_layer), true);
+  layer_add_child(window_layer, text_layer_get_layer(s_upgrade_text_layer));
+
   APP_LOG(APP_LOG_LEVEL_INFO, "4Loading Window");
   s_loading_text_layer = text_layer_create((GRect) { .origin = {0, 60}, .size = {bounds.size.w, 60}});
   text_layer_set_text(s_loading_text_layer, "LOADING");
@@ -1015,6 +1039,7 @@ static void menu_window_load(Window *window) {
 static void menu_window_unload(Window *window) {
   menu_layer_destroy(s_menu_layer);
   text_layer_destroy(s_error_text_layer);
+  text_layer_destroy(s_upgrade_text_layer);
   text_layer_destroy(s_loading_text_layer);
 }
 
@@ -1023,17 +1048,16 @@ static void menu_window_unload(Window *window) {
 static void init(void) {
 
   APP_LOG(APP_LOG_LEVEL_DEBUG,"INITIALIZING...");
+  APP_LOG(APP_LOG_LEVEL_DEBUG,"APP VERSION: %s", VERSION);
 
   /*
-  APP_LOG(APP_LOG_LEVEL_DEBUG,"DELETING!");
-  
-  persist_delete(PERSIST_LIST_SIZE);
-  persist_delete(PERSIST_LIST);
-  persist_delete(PERSIST_LIST_BYTE_LENGTH);
-  persist_delete(PERSIST_VERSION);
-
-  return;
+    persist_delete(PERSIST_LIST_SIZE);
+    persist_delete(PERSIST_LIST);
+    persist_delete(PERSIST_LIST_BYTE_LENGTH);
+    persist_delete(PERSIST_VERSION_3_1);
+    persist_delete(PERSIST_VERSION_3_0);
 */
+
   s_menu_window = window_create();
   window_set_window_handlers(s_menu_window, (WindowHandlers){
     .load = menu_window_load,
@@ -1048,7 +1072,7 @@ static void init(void) {
   // aplite check
   //app_message_open(6364, 6364);
   app_message_open(MAX_INBOX_BUFFER,MAX_OUTBOX_BUFFER);
-  if (persist_exists(PERSIST_VERSION)) {
+  if (persist_exists(PERSIST_VERSION_3_1)) {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store found. Assuming version post-3.1");
     if (persist_exists(PERSIST_LIST_SIZE)){
       APP_LOG(APP_LOG_LEVEL_DEBUG, "Found presistent store. Loading into memory.");
@@ -1067,9 +1091,6 @@ static void init(void) {
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
       }
     }
-  } else {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store empty. Assuming version pre-3.1");
-  }
     if (layer_get_hidden(text_layer_get_layer(s_error_text_layer)) && listString == 0) {
       text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_LIST);
       layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
@@ -1077,6 +1098,22 @@ static void init(void) {
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
     loaded = true;
     menu_layer_reload_data(s_menu_layer);
+  } else {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store empty. Assuming version pre-3.1");
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"DELETING!");
+    
+    persist_delete(PERSIST_LIST_SIZE);
+    persist_delete(PERSIST_LIST);
+    persist_delete(PERSIST_LIST_BYTE_LENGTH);
+    persist_delete(PERSIST_VERSION_3_1);
+    persist_delete(PERSIST_VERSION_3_0);
+
+    text_layer_set_text(s_upgrade_text_layer, MSG_ERR_UPGRADE_VERSION);
+    layer_set_hidden(text_layer_get_layer(s_upgrade_text_layer), false);
+    layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+    loaded = true;
+    menu_layer_reload_data(s_menu_layer);
+  }
 }
 
 static void deinit(void) {
