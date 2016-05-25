@@ -42,6 +42,7 @@ static int *folderSizeList = NULL;
 static char *listString = NULL;
 static int listSize = 0;
 static bool loaded = false;
+static bool versionChecked = false;
 static ClickConfigProvider previous_ccp;
 static DictionaryIterator *dict;
 
@@ -704,6 +705,10 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
 
   } else if (strcmp(listAction, "chunk")==0) {
+  if (!versionChecked) {
+    layer_set_hidden(text_layer_get_layer(s_upgrade_text_layer), true);
+    versionChecked = true;
+  }
 
 
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
@@ -717,6 +722,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     if (currentChunkIndex == 0) { 
       APP_LOG(APP_LOG_LEVEL_DEBUG, "Initializing chunk_buffer");
 
+      //free_all_data();
 
       int list_string_length = dict_find(iter, KEY_CHUNK_SIZE)->value->int32;
       APP_LOG(APP_LOG_LEVEL_DEBUG, "list_string_length is : %d", list_string_length);
@@ -744,16 +750,24 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   } else if (strcmp(listAction, "version")==0) {
     send_version_to_phone();
   } else if (strcmp(listAction, "update")==0) {
+  if (!versionChecked) {
+    layer_set_hidden(text_layer_get_layer(s_upgrade_text_layer), true);
+    versionChecked = true;
+  }
 
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
     loaded = false;
+
+    if (currentChunkIndex == 0) {
+      //free_all_data();
+    }
 
     int array_size = dict_find(iter,KEY_SIZE)->value->int32;;
     char *array_string = dict_find(iter, KEY_LIST)->value->cstring;
 
     listSize = array_size;
 
-    free_all_data();
+    
 
     if (array_size > 0 && !layer_get_hidden(text_layer_get_layer(s_error_text_layer))) {
 
@@ -775,7 +789,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
       // Check it was found. If not, dict_find() returns NULL
     if(array_string) {
-      
+
       // Get the length of the string
       length = strlen(array_string);
 
@@ -1110,8 +1124,6 @@ static void init(void) {
 
     text_layer_set_text(s_upgrade_text_layer, MSG_ERR_UPGRADE_VERSION);
     layer_set_hidden(text_layer_get_layer(s_upgrade_text_layer), false);
-    layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
-    loaded = true;
     menu_layer_reload_data(s_menu_layer);
   }
 }
