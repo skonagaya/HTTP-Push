@@ -1,4 +1,5 @@
 #include <pebble.h>
+#include <vector.h>
 
 #define KEY_LIST 0
 #define KEY_SIZE 1
@@ -10,10 +11,15 @@
 #define KEY_CHUNK_SIZE 7
 #define KEY_VERSION 8
 #define KEY_ERROR 9
+#define KEY_NOTIFICATION 10
+#define KEY_REQUEST_NAME 11
 
 #define STACK_MAX 100
 
-static const char VERSION[] = "3.1.0";
+static const char VERSION[] = "4.0.0";
+
+static const char DEBUG_ENABLED = false;
+static const char RESET_DATA = false;
 
 // Calculate the size of the buffer you require by summing the sizes of all 
 // the keys and values in the larges message the app will handle. 
@@ -28,10 +34,16 @@ static const char VERSION[] = "3.1.0";
 static Window *s_menu_window;
 static MenuLayer *s_menu_layer;
 static TextLayer *s_error_text_layer, *s_loading_text_layer, *s_upgrade_text_layer;
+static StatusBarLayer *status_bar = NULL;
+static ScrollLayer *s_scroll_layer = NULL;
+static TextLayer *s_text_layer = NULL;
+static TextLayer *s_title_text_layer = NULL;
+//static char s_scroll_text[] = " eget pharetra a, lacin  ia ac justo. Suspendisse at ante nec felis facilisis eleifend. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nam quam tellus, fermentu  m quis vulputate quis, vestibulum interdum sapien. Vestibulum lobortis pellentesque pretium. Quisque ultricies purus e  u orci convallis lacinia. Cras a urna mi. Donec convallis ante id dui dapibus nec ullamcorper erat egestas. Aenean a m  auris a sapien commodo lacinia. Sed posuere mi vel risus congue ornare. Curabitur leo nisi, euismod ut pellentesque se  d, suscipit sit amet lorem. Aliquam eget sem vitae sem aliquam ornare. In sem sapien, imperdiet eget pharetra a, lacin  ia ac justo. Suspendisse at ante nec felis facilisis eleifend.";
+//static char s_scroll_title_text[] = "Lorem";
 
 static const char *MSG_ERR_EMPTY_FOLDER = "Folder is empty.";
 static const char *MSG_ERR_EMPTY_LIST = "Call list is empty!\nConfigure requests on your phone.";
-static const char *MSG_ERR_UPGRADE_VERSION = "NEW VERSION DETECTED\nResend requests from your phone.";
+static const char *MSG_ERR_UPGRADE_VERSION = "New version detected\nRe-send configuration from phone.";
 
 static char s_item_text[32];
 static char *s_buffer = NULL;
@@ -46,6 +58,9 @@ static bool versionChecked = false;
 static ClickConfigProvider previous_ccp;
 static DictionaryIterator *dict;
 
+static vector pendingIndexList;
+static vector folderIndexList;
+
 // var for chunking 
 static int currentChunkIndex = 0;
 static char *chunk_buffer = NULL;
@@ -54,24 +69,107 @@ static int persistentListIndex = 0;
 
 // var for settings
 static int vibrationLength = 100;
+static GColor backgroundColor;
+static GColor foregroundColor;
+static GColor highlightColor;
+static GColor statusBarColor;
+static bool backgroundIsDark = false;
+static bool showFolderIcon = false;
+static bool showStatusBar = false;
+
+// apng
+static GBitmap *s_bitmap = NULL;
+static BitmapLayer *s_bitmap_layer;
+static GBitmapSequence *s_sequence = NULL;
+static bool loading = false;
+static void load_sequence();
+static bool apngEnabled = false;
+
+// icon
+static GBitmap *s_menu_icon_black;
+static GBitmap *s_menu_icon_white;
+
+#if !defined(PBL_PLATFORM_DIORITE) && !defined(PBL_PLATFORM_APLITE)
+static char spinner[4][2] = {
+    { "-" },
+    { "\\"},
+    { "|" },
+    { "/" }
+  };
+
+static int spinnerCtr = 0;
+#endif
+
+static char * indexToString(int,int);
+static char * status_content(int,int);
+static int findn(int);
+static void reverse(char[]);
+static void itoa(int,char[]);
 
 enum {
   PERSIST_LIST,
   PERSIST_LIST_SIZE,        // number of folders+requests
   PERSIST_LIST_BYTE_LENGTH, // length in byte of entire list
   PERSIST_VERSION_3_0,
-  PERSIST_VERSION_3_1
+  PERSIST_VERSION_3_1,
+  PERSIST_VERSION_4_0_0
 
 };
+
+struct RGB
+{
+        int r;
+        int g;
+        int b;
+};
+
+static unsigned int strtohex(const char * s) {
+  unsigned int result = 0;
+  int c ;
+  while (*s) {
+    result = result << 4;
+    if (c=(*s-'0'),(c>=0 && c <=9)) result|=c;
+    else if (c=(*s-'A'),(c>=0 && c <=5)) result|=(c+10);
+    else if (c=(*s-'a'),(c>=0 && c <=5)) result|=(c+10);
+    else break;
+    ++s;
+  }
+  return result;
+}
+
+static struct RGB color_converter (int hexValue)
+{
+ struct RGB rgbColor;
+ rgbColor.r = ((hexValue >> 16) & 0xFF) ;
+ rgbColor.g = ((hexValue >> 8) & 0xFF) ;
+ rgbColor.b = ((hexValue) & 0xFF) ;
+ return (rgbColor); 
+}
+
+
+static int luminance_percentage_from_hex_string(char * hexStr) {
+    
+    struct RGB rgb = color_converter(strtohex(hexStr));
+    
+    double rd = rgb.r;
+    double gd = rgb.g;
+    double bd = rgb.b;
+    
+    // constants from http://www.itu.int/rec/R-REC-BT.601
+    return ((int) (0.299 * rd + 0.587 * gd + 0.114 * bd) * 100 / 255); 
+}
+
+static bool is_hex_string_dark(char * hexStr) {
+  return (luminance_percentage_from_hex_string(hexStr) < 50);
+}
 
 struct Stack {
-    int     * data;
-    int     size;
-    int     max;
-    bool    initiated;
+  int     * data;
+  int     size;
+  int     max;
+  bool    initiated;
 };
 typedef struct Stack Stack;
-
 
 void Stack_Init(Stack *S,int stackMax)
 {
@@ -90,7 +188,8 @@ void Stack_Deinit(Stack *S)
 int Stack_Top(Stack *S)
 {
     if (S->size == 0) {
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Error: stack empty\n");
+        if (DEBUG_ENABLED) 
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Error: stack empty\n");
         return -1;
     } 
 
@@ -102,78 +201,128 @@ void Stack_Push(Stack *S, int d)
     if (S->size < S->max)
         S->data[S->size++] = d;
     else
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Error: stack full\n");
+
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Error: stack full\n");
 }
 
 void Stack_Pop(Stack *S)
 {
     if (S->size == 0)
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Error: stack empty\n");
+    {
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Error: stack empty\n");
+    }
     else
         S->size--;
 }
 static Stack menuLayerStack;
 static Stack menuRowStack;
+static int previousRowIndex;
 
-static void reset_menu_index(MenuLayer * layer, int toRow) {
+static bool at_root() {
+  return(Stack_Top(&menuLayerStack) == 0);
+}
+
+static bool at_empty_folder() {
+  return(folderSizeList[Stack_Top(&menuLayerStack)] == 0);
+}
+
+static void set_menu_index(MenuLayer * layer, int toRow) {
 
     MenuIndex idx = menu_layer_get_selected_index(layer);
     idx.row = toRow;
     menu_layer_set_selected_index(layer,idx,MenuRowAlignCenter,false);
 }
 
-static void previous_button_hander(ClickRecognizerRef recognizer, void *context) {
+// handler that exits app at base
+static void pop_all_handler(ClickRecognizerRef recognizer, void *context) {
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "POPPY ALLLL");
   window_stack_pop_all(true);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "POPPY ALLLL");
-
 }
 
-static void return_cpp(void *context) {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "calling the new ccp");
+
+// set to root configuration
+static void pop_all_config(void *context) {
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "calling the new ccp");
   previous_ccp(context);
-  window_single_click_subscribe(BUTTON_ID_BACK, previous_button_hander);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "done in the new ccp");
+  window_single_click_subscribe(BUTTON_ID_BACK, pop_all_handler);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "done in the new ccp");
 
 }
-static void release_back_button(Window *window, MenuLayer *menu_layer) {
-  //menu_window_unload(window);
-  window_set_click_config_provider_with_context(window, return_cpp, menu_layer);
-}
-
 
 static void back_button_handler(ClickRecognizerRef recognizer, void *context) {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Back button handler invoked");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Back button handler invoked");
   layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
-  reset_menu_index(s_menu_layer,Stack_Top(&menuRowStack));
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Error layer set to hidden");
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Stack_Top(&menuLayerStack): %d", Stack_Top(&menuLayerStack));
-  Stack_Pop(&menuLayerStack);
-  Stack_Pop(&menuRowStack);
+  //set_menu_index(s_menu_layer,Stack_Top(&menuRowStack));
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Error layer set to hidden");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Stack_Top(&menuLayerStack): %d", Stack_Top(&menuLayerStack));
+  Stack_Pop(&menuLayerStack); // pop the view
+  Stack_Pop(&menuRowStack); // pop the datastructure
+  set_menu_index(s_menu_layer,previousRowIndex); // highlight the index of previous view
   menu_layer_reload_data(s_menu_layer);
 
-  if (Stack_Top(&menuLayerStack) == 0){
-
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "HERE");
-    release_back_button(s_menu_window, s_menu_layer);
+  if (at_root()){
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "HERE");
+    window_set_click_config_provider_with_context(s_menu_window, pop_all_config, s_menu_layer);
 
   }
 }
 
 
-static void new_ccp(void *context) {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "calling the new ccp");
+static void folder_changed_config(void *context) {
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "calling the new ccp");
   previous_ccp(context);
   window_single_click_subscribe(BUTTON_ID_BACK, back_button_handler);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "done in the new ccp");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "done in the new ccp");
 }
 
-static void force_back_button(Window *window, MenuLayer *menu_layer) {
-  window_set_click_config_provider_with_context(window, new_ccp, menu_layer);
+static void exit_notification_config(void *context) {
+  window_single_click_subscribe(BUTTON_ID_BACK, back_button_handler);
+  previous_ccp(context);
+}
+
+
+static void notification_back_button_handler(ClickRecognizerRef recognizer, void *context) {
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "removing notification back handler");
+  layer_set_hidden(scroll_layer_get_layer(s_scroll_layer), true);
+  layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
+  layer_set_hidden(menu_layer_get_layer(s_menu_layer), false);
+
+  window_set_background_color(s_menu_window, backgroundColor);
+  if (at_root()){
+    window_set_click_config_provider_with_context(s_menu_window, pop_all_config, s_menu_layer);
+  } else {
+    window_set_click_config_provider_with_context(s_menu_window, exit_notification_config, s_menu_layer);  
+  }
+  scroll_layer_destroy(s_scroll_layer);
+  text_layer_destroy(s_text_layer);
+  text_layer_destroy(s_title_text_layer);
+  s_scroll_layer = NULL;
+  s_text_layer = NULL;
+  s_title_text_layer = NULL;
+}
+
+static void notification_exit_callback(void  *context) {
+  window_single_click_subscribe(BUTTON_ID_BACK, notification_back_button_handler);
+  window_single_click_subscribe(BUTTON_ID_SELECT, notification_back_button_handler);
 }
 
 
 static void send_to_phone() {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing data to send to Phone");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing data to send to Phone");
 
   if (listSize == 0) return;
   app_message_outbox_begin(&dict);
@@ -182,21 +331,56 @@ static void send_to_phone() {
   int rowIndex = (int) menu_layer_get_selected_index(s_menu_layer).row;
   
   if (strcmp(statusList[folderIndex][rowIndex],"Ready") != 0 &&
-     strcmp(statusList[folderIndex][rowIndex],"Pending...") != 0) {
+     strcmp(status_content(folderIndex,rowIndex),"pending")!=0) {
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "If its not ready or pending...");
+
     free (statusList[folderIndex][rowIndex]);
     statusList[folderIndex][rowIndex] = NULL;
-   APP_LOG(APP_LOG_LEVEL_DEBUG, "?Preparing data to send to Phone");
   }
   menu_layer_reload_data(s_menu_layer);
-  statusList[folderIndex][rowIndex] = "Pending...";
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "statusList[%d][%d] set to Waiting...",folderIndex, rowIndex);
 
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Menu index to send: %d", rowIndex);
+  #if !defined(PBL_PLATFORM_DIORITE) && !defined(PBL_PLATFORM_APLITE)
+  statusList[folderIndex][rowIndex] = spinner[spinnerCtr++];
+  if (spinnerCtr >= 5) {
+    spinnerCtr = 0;
+  }
+  #else
+  statusList[folderIndex][rowIndex] = "Pending...";
+  #endif
+
+
+  // Add to pending List 
+
+
+  if (DEBUG_ENABLED) {
+      printf("BEFORE ADD");
+    for (int i = 0; i < vector_total(&pendingIndexList); i++)
+        printf("%s ", (char *) vector_get(&pendingIndexList, i));
+    printf("\n");
+  }
+  
+  char * indexString = indexToString(folderIndex,rowIndex);
+
+  vector_add(&pendingIndexList, (indexString));
+if (DEBUG_ENABLED) {
+      printf("AFTER ADD");
+    for (int i = 0; i < vector_total(&pendingIndexList); i++)
+        printf("%s ", (char *) vector_get(&pendingIndexList, i));
+    printf("\n");
+  }
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "statusList[%d][%d] set to Waiting...",folderIndex, rowIndex);
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Menu index to send: %d", rowIndex);
   dict_write_uint8(dict,KEY_INDEX,rowIndex);
   dict_write_uint8(dict,KEY_FOLDER_INDEX,folderIndex);
   dict_write_cstring(dict,KEY_ACTION,"response");
   const uint32_t final_size = dict_write_end(dict);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
   app_message_outbox_send();
 }
 
@@ -206,72 +390,87 @@ void chunk_timer_callback(void *data) {
   amr = app_message_outbox_begin(&dict);
 
   if(amr == APP_MSG_OK) {
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_OK");
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_OK");
 
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunk index to send: %d", currentChunkIndex);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_CHUNK_INDEX);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunk index to send: %d", currentChunkIndex);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_CHUNK_INDEX);
     dict_write_uint8(dict,KEY_CHUNK_INDEX,currentChunkIndex);
 
     dr = dict_write_cstring(dict,KEY_ACTION,"chunk");
     const uint32_t final_size = dict_write_end(dict);
 
-    if (dr == DICT_OK) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_OK");
-    else if (dr == DICT_NOT_ENOUGH_STORAGE) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_NOT_ENOUGH_STORAGE");
-    else if (dr == DICT_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_INVALID_ARGS");
+    if (DEBUG_ENABLED) {
+      if (dr == DICT_OK) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_OK");
+      else if (dr == DICT_NOT_ENOUGH_STORAGE) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_NOT_ENOUGH_STORAGE");
+      else if (dr == DICT_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_INVALID_ARGS");
+    }
     
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
     app_message_outbox_send();
 
   }
   else if(amr == APP_MSG_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_INVALID_ARGS");
   else if(amr == APP_MSG_BUSY) 
   {
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_BUSY"); 
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Sleeping for 500 milliseconds..."); 
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_BUSY"); 
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"Sleeping for 500 milliseconds..."); 
     app_timer_register(500, chunk_timer_callback, NULL);
   }
 
 }
 
 static void send_version_to_phone() {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to send version to Phone");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to send version to Phone");
 
   //if (listSize == 0) return;
 
 
   app_message_outbox_begin(&dict);
 
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_VERSION);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message version to send: %s", VERSION);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_VERSION);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Message version to send: %s", VERSION);
   dict_write_cstring(dict,KEY_VERSION,VERSION);
   dict_write_cstring(dict,KEY_ACTION,"version");
   const uint32_t final_size = dict_write_end(dict);
 
-  
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
   app_message_outbox_send();
 }
 
 static void send_command_error_to_phone (char *cmd) {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to send error to Phone");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to send error to Phone");
 
   //if (listSize == 0) return;
 
   app_message_outbox_begin(&dict);
 
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_ERROR);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Message error to send: %s", cmd);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_ERROR);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Message error to send: %s", cmd);
   dict_write_cstring(dict,KEY_ERROR,cmd);
   dict_write_cstring(dict,KEY_ACTION,"error");
   const uint32_t final_size = dict_write_end(dict);
 
-  
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
   app_message_outbox_send();
 }
 
 static void request_next_chunk_from_phone() {
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to request next chunk from Phone");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Preparing to request next chunk from Phone");
 
   //if (listSize == 0) return;
 
@@ -281,43 +480,48 @@ static void request_next_chunk_from_phone() {
   amr = app_message_outbox_begin(&dict);
 
   if(amr == APP_MSG_OK) {
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_OK");
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunk index to send: %d", currentChunkIndex);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_CHUNK_INDEX);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_OK");
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunk index to send: %d", currentChunkIndex);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Message index to send: %d", KEY_CHUNK_INDEX);
     dict_write_uint8(dict,KEY_CHUNK_INDEX,currentChunkIndex);
     dr = dict_write_cstring(dict,KEY_ACTION,"chunk");
     const uint32_t final_size = dict_write_end(dict);
 
-    if (dr == DICT_OK) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_OK");
-    else if (dr == DICT_NOT_ENOUGH_STORAGE) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_NOT_ENOUGH_STORAGE");
-    else if (dr == DICT_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_INVALID_ARGS");
-    
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
+
+    if (DEBUG_ENABLED) {
+      if (dr == DICT_OK) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_OK");
+      else if (dr == DICT_NOT_ENOUGH_STORAGE) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_NOT_ENOUGH_STORAGE");
+      else if (dr == DICT_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"DICT_INVALID_ARGS");
+    }
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Sent message to phone! (%d bytes)", (int) final_size);
     app_message_outbox_send();
   }
-  else if(amr == APP_MSG_INVALID_ARGS) APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_INVALID_ARGS");
+  else if(amr == APP_MSG_INVALID_ARGS) {
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_INVALID_ARGS");
+  }
   else if(amr == APP_MSG_BUSY) 
-  {
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_BUSY"); 
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"Sleeping for 500 milliseconds..."); 
+  { 
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"APP_MSG_BUSY"); 
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"Sleeping for 500 milliseconds..."); 
     app_timer_register(500, chunk_timer_callback, NULL);
   }
 
 }
 
+/*
 static void free_all_data() {
 
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Starting free all procedure");
 
   APP_LOG(APP_LOG_LEVEL_DEBUG, "The listSize is %d", listSize);
 
-/*
-  if(s_buffer != NULL) {
-    free(s_buffer);
-    s_buffer = NULL;
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
-  }
-*/
   if(listAction != NULL) {
     free(listAction);
     listAction = NULL;
@@ -356,7 +560,7 @@ static void free_all_data() {
   }
   //if (s_buffer != NULL)
     //free(s_buffer);
-}
+}*/
 
 static bool startsWith(const char *a, const char *b)
 {
@@ -393,10 +597,30 @@ static char * extract_between(const char *str, const char *p1, const char *p2)
   return "";
 }
 
+
+#if !defined(PBL_PLATFORM_DIORITE) && !defined(PBL_PLATFORM_APLITE)
+static void update_colors() {
+  menu_layer_set_highlight_colors(s_menu_layer,highlightColor,foregroundColor);
+  menu_layer_set_normal_colors(s_menu_layer,backgroundColor,highlightColor);
+  text_layer_set_text_color(s_error_text_layer, foregroundColor);
+  text_layer_set_background_color(s_error_text_layer, highlightColor);
+  text_layer_set_text_color(s_upgrade_text_layer, foregroundColor);
+  text_layer_set_background_color(s_upgrade_text_layer, highlightColor);
+  if (showStatusBar) {
+
+    status_bar_layer_set_colors(status_bar, statusBarColor, foregroundColor);
+  }
+  window_set_background_color(s_menu_window, backgroundColor);
+}
+#endif
+
 static void update_menu_data(int stringSize) {
 
   //free_all_data();
   layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
+  if (apngEnabled)
+    layer_set_hidden(bitmap_layer_get_layer(s_bitmap_layer), false);
+  loading = true;
   loaded = false;
 
   menu_layer_reload_data(s_menu_layer);
@@ -404,6 +628,9 @@ static void update_menu_data(int stringSize) {
   if (stringSize == 0) {
 
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+    if (apngEnabled)
+    layer_set_hidden(bitmap_layer_get_layer(s_bitmap_layer), true);
+    loading = false;
     loaded = true;
     menu_layer_reload_data(s_menu_layer);
     return;
@@ -424,15 +651,19 @@ static void update_menu_data(int stringSize) {
     }
     listString = malloc(listByteSize+1);
 
-    
+    vector_clear(&folderIndexList);
 
     while (bytesRemaining > 0) {
       char *buf= malloc(PERSIST_DATA_MAX_LENGTH);
 
-
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Reading chunk %d from persistent store", currentPersistenceIndex);
-      int readByteSize = persist_read_string(PERSIST_LIST+currentPersistenceIndex,buf,PERSIST_DATA_MAX_LENGTH);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Read: %s", buf);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "PERSIST_DATA_MAX_LENGTH: %d", PERSIST_DATA_MAX_LENGTH);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Reading chunk %d from persistent store", currentPersistenceIndex);
+      //int readByteSize = persist_read_string(PERSIST_LIST+currentPersistenceIndex,buf,PERSIST_DATA_MAX_LENGTH);
+      persist_read_string(PERSIST_LIST+currentPersistenceIndex,buf,PERSIST_DATA_MAX_LENGTH);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Read: %s", buf);
       if (currentPersistenceIndex == 0) {
         strcpy(listString, buf);
       }
@@ -448,17 +679,20 @@ static void update_menu_data(int stringSize) {
     
     listString[listByteSize] = '\0';
 
-
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Read list from persistent storage: %s", listString);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Read size (value) from persistent storage: %d", listSize);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Read list from persistent storage: %s", listString);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Read size (value) from persistent storage: %d", listSize);
 
   } else {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Processing stringSize: %i",stringSize);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Processing stringSize: %i",stringSize);
     listSize = stringSize;
     listString = (char*)malloc((strlen(s_buffer)+1)*sizeof(char));
     memcpy(listString, s_buffer, (strlen(s_buffer)+1)*sizeof(char));
     //strcpy(listString,s_buffer);
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "strlen(listString): %i",strlen(listString));
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "strlen(listString): %i",strlen(listString));
   }
 
   theList = (char ***) malloc(listSize * sizeof(char**));
@@ -479,43 +713,54 @@ static void update_menu_data(int stringSize) {
   //_V_<Vibration_Length>
   while (startsWith(listString, "_") && parseSuccessful) {
     parseSuccessful = false;
-    if (startsWith(listString, "_F")) {
+    if (startsWith(listString, "_F_")) {
       chopStringBy(listString,2);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n\n",listString);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n\n",listString);
 
       char * folderSizeStr = extract_between(listString,"_","_");
       int folderSize    = atoi(folderSizeStr);
       chopStringBy(listString,1+ strlen(folderSizeStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) folderSize %d",folderSize);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(folderSizeStr) %d",strlen(folderSizeStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) folderSize %d",folderSize);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(folderSizeStr) %d",strlen(folderSizeStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
 
       char * folderIndexStr = extract_between(listString,"_","_");
       int folderIndex    = atoi(folderIndexStr);
       chopStringBy(listString,1+ strlen(folderIndexStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "2) folderIndex %d",folderIndex);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "2) strlen(folderIndexStr) %d",strlen(folderIndexStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "2) ListString %s\n",listString);
-
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "2) folderIndex %d",folderIndex);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "2) strlen(folderIndexStr) %d",strlen(folderIndexStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "2) ListString %s\n",listString);
+      }
       char * folderParentIndexStr = extract_between(listString,"_","_");
       int folderParentIndex    = atoi(folderParentIndexStr);
       chopStringBy(listString,1+ strlen(folderParentIndexStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "3) folderParentIndex %d",folderParentIndex);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "3) strlen(folderParentIndexStr) %d",strlen(folderParentIndexStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "3) ListString %s\n",listString);
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "3) folderParentIndex %d",folderParentIndex);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "3) strlen(folderParentIndexStr) %d",strlen(folderParentIndexStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "3) ListString %s\n",listString);
+      }
 
       char * folderRowStr = extract_between(listString,"_","_");
       int folderRow    = atoi(folderRowStr);
       chopStringBy(listString,1+ strlen(folderRowStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "4) folderRow %d",folderRow);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "4) strlen(folderRowStr) %d",strlen(folderRowStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "4) ListString %s\n",listString);
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "4) folderRowStr %s",folderRowStr);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "4) folderRow %d",folderRow);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "4) strlen(folderRowStr) %d",strlen(folderRowStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "4) ListString %s\n",listString);
+      }
 
       char * folderName = extract_between(listString,"_","_");
       chopStringBy(listString,1+ strlen(folderName));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "5) folderRow %d",folderRow);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "5) strlen(folderRowStr) %d",strlen(folderName));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "5) ListString %s\n",listString);
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "5) folderName %s",folderName);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "5) strlen(folderName) %d",strlen(folderName));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "5) ListString %s\n",listString);
+      }
 
       if (folderSize != 0) {
         theList[folderIndex] = (char **) malloc(folderSize * sizeof(char*));
@@ -526,115 +771,399 @@ static void update_menu_data(int stringSize) {
       folderSizeList[folderIndex] = folderSize;
 
       if (folderParentIndex != -1 && folderRow != -1) {
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing folder name to theList[%d][%d]: %s",folderParentIndex,folderRow,folderName);
+        if (DEBUG_ENABLED) 
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing folder name to theList[%d][%d]: %s",folderParentIndex,folderRow,folderName);
         theList[folderParentIndex][folderRow] = (char*)malloc((strlen(folderName)+1) * sizeof(char));
         memcpy(theList[folderParentIndex][folderRow],folderName+'\0',(strlen(folderName)+1) * sizeof(char));
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing status name to theList[%d][%d]: %s",folderParentIndex,folderRow,"F");
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing status name to theList[%d][%d]: %s",folderParentIndex,folderRow,"F");
         statusList[folderParentIndex][folderRow] = strcat(folderIndexStr,"_");
 
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Doublechecking theList[%d][%d]: %s",folderParentIndex,folderRow,theList[folderParentIndex][folderRow]);
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Doublechecking statusList[%d][%d]: %s",folderParentIndex,folderRow,statusList[folderParentIndex][folderRow]);
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Doublechecking theList[%d][%d]: %s",folderParentIndex,folderRow,theList[folderParentIndex][folderRow]);
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Doublechecking statusList[%d][%d]: %s",folderParentIndex,folderRow,statusList[folderParentIndex][folderRow]);
       }
       parseSuccessful = true;
-    } else if (startsWith(listString, "_E")){
+
+      // Don't add root
+      if (folderParentIndex >= 0 && folderRow >= 0) {
+        char * indexString = indexToString(folderParentIndex,folderRow);
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "6) Added %s to vector folderIndexList",indexString);
+        vector_add(&folderIndexList,(indexString));
+      }
+
+    } else if (startsWith(listString, "_E_")){
       chopStringBy(listString,2);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
 
       char * parentIndexStr = extract_between(listString,"_","_");
       int parentIndex    = atoi(parentIndexStr);
       chopStringBy(listString,1+ strlen(parentIndexStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) parentIndex %d",parentIndex);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(parentIndexStr) %d",strlen(parentIndexStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
-
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) parentIndex %d",parentIndex);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(parentIndexStr) %d",strlen(parentIndexStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
       char * entryRowStr = extract_between(listString,"_","_");
       int entryRow    = atoi(entryRowStr);
       chopStringBy(listString,1+ strlen(entryRowStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "2) entryRow %d",entryRow);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "2) strlen(entryRowStr) %d",strlen(entryRowStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "2) ListString %s\n",listString);
+      if (DEBUG_ENABLED){
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "2) entryRow %d",entryRow);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "2) strlen(entryRowStr) %d",strlen(entryRowStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "2) ListString %s\n",listString);
+      }
 
       char * entryName = extract_between(listString,"_","_");
       chopStringBy(listString,1+ strlen(entryName));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "3) entryName %s",entryName);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "3) strlen(entryName) %d",strlen(entryName));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "3) ListString %s\n",listString);
-
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing entry name to theList[%d][%d]: %s",parentIndex,entryRow,entryName);
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "3) entryName %s",entryName);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "3) strlen(entryName) %d",strlen(entryName));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "3) ListString %s\n",listString);
+      }
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing entry name to theList[%d][%d]: %s",parentIndex,entryRow,entryName);
       theList[parentIndex][entryRow] = (char*)malloc((strlen(entryName)+1) * sizeof(char));
       memcpy(theList[parentIndex][entryRow],entryName+'\0',(strlen(entryName)+1) * sizeof(char));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing status name to theList[%d][%d]: %s",parentIndex,entryRow,"Ready");
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing status name to theList[%d][%d]: %s",parentIndex,entryRow,"Ready");
       statusList[parentIndex][entryRow] = "Ready";
+      if (DEBUG_ENABLED)
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Doublechecking theList[%d][%d]: %s",parentIndex,entryRow,theList[parentIndex][entryRow]);
+      if (DEBUG_ENABLED)
         APP_LOG(APP_LOG_LEVEL_DEBUG, "Doublechecking statusList[%d][%d]: %s",parentIndex,entryRow,statusList[parentIndex][entryRow]);
 
       parseSuccessful = true;
-    } else if (startsWith(listString, "_V")) {
+    } else if (startsWith(listString, "_V_")) {
       chopStringBy(listString,2);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
 
       char * vibrationLengthStr = extract_between(listString,"_","_");
       vibrationLength    = atoi(vibrationLengthStr);
       chopStringBy(listString,1+ strlen(vibrationLengthStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) vibtrationLengthInt %d",vibrationLength);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(vibrationLengthStr) %d",strlen(vibrationLengthStr));
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) vibtrationLengthInt %d",vibrationLength);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(vibrationLengthStr) %d",strlen(vibrationLengthStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
+      parseSuccessful = true;
 
-    }
+    } else if (startsWith(listString, "_BC_")) { // Set Background color
+      chopStringBy(listString,3);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+
+      char * backgroundColorStr = extract_between(listString,"_","_");
+
+      backgroundIsDark = is_hex_string_dark(backgroundColorStr);
+      chopStringBy(listString,1+ strlen(backgroundColorStr));
+      if (DEBUG_ENABLED){ 
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) backgroundColorStr %s",backgroundColorStr);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(backgroundColorStr) %d",strlen(backgroundColorStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
+      #if defined(PBL_COLOR)
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Setting for Pebble Color");
+        backgroundColor = GColorFromHEX(strtohex(backgroundColorStr));
+      #endif
+      parseSuccessful = true;
+    } else if (startsWith(listString, "_FC_")) { // Set foreground color
+      chopStringBy(listString,3);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+
+      char * foregroundColorStr = extract_between(listString,"_","_");
+      chopStringBy(listString,1+ strlen(foregroundColorStr));
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) foregroundColorStr %s",foregroundColorStr);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(foregroundColorStr) %d",strlen(foregroundColorStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
+      #if defined(PBL_COLOR)
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Setting for Pebble Color");
+        foregroundColor = GColorFromHEX(strtohex(foregroundColorStr));
+      #endif
+      parseSuccessful = true;
+    } else if (startsWith(listString, "_SC_")) { // Set highlight color
+      chopStringBy(listString,3);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+
+      char * highlightColorStr = extract_between(listString,"_","_");
+      chopStringBy(listString,1+ strlen(highlightColorStr));
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) highlightColorStr %s",highlightColorStr);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(highlightColorStr) %d",strlen(highlightColorStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
+      #if defined(PBL_COLOR)
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Setting for Pebble Color");
+        highlightColor = GColorFromHEX(strtohex(highlightColorStr));
+      #endif
+      parseSuccessful = true;
+    } else if (startsWith(listString, "_TC_")) { // Set statusbar color
+      chopStringBy(listString,3);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+
+      char * statusBarColorStr = extract_between(listString,"_","_");
+      chopStringBy(listString,1+ strlen(statusBarColorStr));
+      if (DEBUG_ENABLED) {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) statusBarColorStr %s",statusBarColorStr);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(statusBarColorStr) %d",strlen(statusBarColorStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
+      #if defined(PBL_COLOR)
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Setting for Pebble Color");
+        statusBarColor = GColorFromHEX(strtohex(statusBarColorStr));
+      #endif
+      parseSuccessful = true;
+    } else if (startsWith(listString, "_FI_")) { // Set folder icon
+      chopStringBy(listString,3);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+
+      char * showFolderIconStr = extract_between(listString,"_","_");
+      chopStringBy(listString,1+ strlen(showFolderIconStr));
+      if (DEBUG_ENABLED) { 
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) highlightColorStr %s",showFolderIconStr);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(highlightColorStr) %d",strlen(showFolderIconStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
+
+      showFolderIcon = strcmp(showFolderIconStr, "0")==0 ? 0 : 1;
+
+      parseSuccessful = true;
+    } else if (startsWith(listString, "_SB_")) { // Set status bar
+      chopStringBy(listString,3);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+
+      char * showStatusBarStr = extract_between(listString,"_","_");
+      chopStringBy(listString,1+ strlen(showStatusBarStr));
+      if (DEBUG_ENABLED) { 
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) highlightColorStr %s",showStatusBarStr);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(highlightColorStr) %d",strlen(showStatusBarStr));
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+      }
+
+      showStatusBar = strcmp(showStatusBarStr, "0")==0 ? 0 : 1;
+
+      parseSuccessful = true;
+    } /*else if (startsWith(listString, "_FL_")) { // Set folder Index List
+      chopStringBy(listString,3);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "0) ListString %s\n",listString);
+
+      folderIndexList = extract_between(listString,"_","_");
+      chopStringBy(listString,1+ strlen(folderIndexList));
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) folderIndexList %s",folderIndexList);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) strlen(folderIndexList) %d",strlen(folderIndexList));
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "1) ListString %s\n",listString);
+    }*/
+
     if (!parseSuccessful) {
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "...nothing more to do...");
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "...nothing more to do...");
       break;
     }
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "...continuing...");
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "...continuing...");
   }
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Completed data stream parsing.");
 
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Completed data stream parsing.");
-  //free(theList[0][1]);
-  //theList[0][1] = NULL;
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, "Data[%d][%d]: %s",0,4, theList[0][3]);
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, "Data[%d][%d]: %s",0,4, theList[0][4]);
-  //APP_LOG(APP_LOG_LEVEL_DEBUG, "Data[%d][%d]: %s",0,4, theList[0][5]);
-
-
-  if (listSize != 0) {
-    for (int o=0; o < listSize; o++){
-      for (int i=0; i < folderSizeList[o]; i++){
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Data[%d][%d]: %s",o,i, theList[o][i]);
+  if (DEBUG_ENABLED) {
+    if (listSize != 0) {
+      for (int o=0; o < listSize; o++){
+        for (int i=0; i < folderSizeList[o]; i++){
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Data[%d][%d]: %s",o,i, theList[o][i]);
+        }
       }
     }
   }
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "update_menu_data completed");
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "updating color");
+
+  #if defined(PBL_COLOR)
+  update_colors();
+  #endif
+
+  if (showStatusBar) {
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "show status bar");
+    layer_set_hidden(status_bar_layer_get_layer(status_bar), false);
+  } else {
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "hide status bar");
+    layer_set_hidden(status_bar_layer_get_layer(status_bar), true);
+  }
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "updating color completed");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "update_menu_data completed");
 
   layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+  if (apngEnabled)
+  layer_set_hidden(bitmap_layer_get_layer(s_bitmap_layer), true);
+  loading = false;
   loaded = true;
 
   menu_layer_reload_data(s_menu_layer);
-  /*
-
-  char * pch = NULL;
-  int i;
-  i = 0;
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Splitting string \"%s\" into tokens",listString);
-  pch = strtok (listString,",");
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "strtok'd");
-
-  while (pch != NULL)
-  {
-    theList[i] = (char*)malloc((strlen(pch)+1) * sizeof(char)); // Add extra for end char
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Malloc'd");
-    statusList[i] = "Ready";
-    memcpy(theList[i++],pch,(strlen(pch)+1) * sizeof(char));
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Mem copied");
-    pch = strtok (NULL, ",");
-  }
-
-  for (i=0;i<listSize; ++i) 
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Data[%d]: %s",i, theList[i]);
-  pch = NULL;
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Completed free all procedure");
-*/
-  
 }
+
+static void showNotification(char * title,char * text){
+
+  int statusBarOffset = showStatusBar ? STATUS_BAR_LAYER_HEIGHT : 0;
+
+  Layer *window_layer = window_get_root_layer(s_menu_window);
+  GRect window_bounds = layer_get_bounds(window_layer);
+  GRect bounds = GRect(0, statusBarOffset, window_bounds.size.w, window_bounds.size.h - statusBarOffset);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "Loading Notification layer");
+
+  s_scroll_layer = scroll_layer_create(bounds);
+
+  s_title_text_layer = text_layer_create(GRect(0, 0, bounds.size.w, 60 - statusBarOffset));
+  s_text_layer = text_layer_create(GRect(0, 60 - statusBarOffset, bounds.size.w, 32767));
+  text_layer_set_text(s_text_layer, text);
+  text_layer_set_text(s_title_text_layer, title);
+
+  scroll_layer_set_callbacks(s_scroll_layer, (ScrollLayerCallbacks){.click_config_provider=notification_exit_callback});
+
+  text_layer_set_font(s_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+
+  // Add the layers for display
+  scroll_layer_add_child(s_scroll_layer, text_layer_get_layer(s_title_text_layer));
+  scroll_layer_add_child(s_scroll_layer, text_layer_get_layer(s_text_layer));
+  layer_add_child(window_layer, scroll_layer_get_layer(s_scroll_layer));
+
+  // Set the ScrollLayer's content size to the total size of the text
+  scroll_layer_set_content_size(s_scroll_layer,
+                                text_layer_get_content_size(s_text_layer));
+
+  // Trim text layer and scroll content to fit text box
+  //text_layer_set_size(s_text_layer, text_layer_get_content_size(s_text_layer));
+  //text_layer_set_size(s_title_text_layer, text_layer_get_content_size(s_title_text_layer));
+  text_layer_set_text_alignment(s_title_text_layer, GTextAlignmentCenter);
+
+#if defined(PBL_ROUND)
+
+  text_layer_set_text_alignment(s_text_layer, GTextAlignmentCenter);
+  uint8_t inset = 3;
+  text_layer_enable_screen_text_flow_and_paging(s_title_text_layer, inset);
+  text_layer_enable_screen_text_flow_and_paging(s_text_layer, inset);
+
+  // Enable ScrollLayer paging
+  scroll_layer_set_paging(s_scroll_layer, true);
+
+#endif
+
+
+  text_layer_set_text_color(s_title_text_layer, foregroundColor);
+  text_layer_set_background_color(s_title_text_layer, highlightColor);
+  text_layer_set_text_color(s_text_layer, highlightColor);
+  text_layer_set_background_color(s_text_layer, foregroundColor);
+  window_set_background_color(s_menu_window, foregroundColor);
+  // This binds the scroll layer to the window so that up and down map to scrolling
+  // You may use scroll_layer_set_callbacks to add or override interactivity
+  scroll_layer_set_click_config_onto_window(s_scroll_layer, s_menu_window);
+  //scroll_layer_set_callbacks(s_scroll_layer, (ScrollLayerCallbacks){.click_config_provider=notification_exit_callback});
+  layer_set_hidden(scroll_layer_get_layer(s_scroll_layer), false);
+
+}
+
+
+
+static int findn(int num)
+{
+  if (num == 0) {
+    return 1;
+  }
+    int n = 0;
+    while(num) {
+        num /= 10;
+        n++;
+    }
+    return n;
+}
+
+ /* reverse:  reverse string s in place */
+ static void reverse(char s[])
+ {
+     int i, j;
+     char c;
+ 
+     for (i = 0, j = strlen(s)-1; i<j; i++, j--) {
+         c = s[i];
+         s[i] = s[j];
+         s[j] = c;
+     }
+ }
+ 
+ /* itoa:  convert n to characters in s */
+ static void itoa(int n, char s[])
+ {
+     int i, sign;
+ 
+     if ((sign = n) < 0)  /* record sign */
+         n = -n;          /* make n positive */
+     i = 0;
+     do {       /* generate digits in reverse order */
+         s[i++] = n % 10 + '0';   /* get next digit */
+     } while ((n /= 10) > 0);     /* delete it */
+     if (sign < 0)
+         s[i++] = '-';
+     s[i] = '\0';
+     reverse(s);
+ }
+
+static char * indexToString(int currentFolderIndex, int currentRowIndex) {
+  char * indexString = (char *) malloc(findn(currentFolderIndex)+findn(currentRowIndex)+1);
+  char currentFolderIndexStr[findn(currentFolderIndex)];
+  char currentRowIndexStr[findn(currentRowIndex)];
+
+  itoa(currentFolderIndex,currentFolderIndexStr);
+  itoa(currentRowIndex,currentRowIndexStr);
+
+  strcpy(indexString,currentFolderIndexStr);
+  strcat(indexString,currentRowIndexStr);
+  return indexString;
+}
+
+static char * status_content(int currentFolderIndex, int currentRowIndex) {
+
+  char * indexString = indexToString( currentFolderIndex, currentRowIndex );
+  //APP_LOG(APP_LOG_LEVEL_DEBUG, "%d,%d: %s",currentFolderIndex,currentRowIndex,indexString);
+  //APP_LOG(APP_LOG_LEVEL_DEBUG, "folderIndexList: %s",folderIndexList);
+
+
+    // for (int i = 0; i < vector_total(&pendingIndexList); i++)
+    //     printf("--%s ", (char *) vector_get(&pendingIndexList, i));
+    // printf("\n");
+
+  if (vector_contains(&folderIndexList,indexString)) {
+    free(indexString);
+    indexString = NULL;
+    return "folder";
+  } else if (vector_contains(&pendingIndexList,indexString)) {
+    free(indexString);
+    indexString = NULL;
+    return "pending";
+  }
+  free(indexString);
+  indexString = NULL;
+  return "";
+}
+
 
 void chopN(char *str, size_t n)
 {
@@ -645,14 +1174,18 @@ void chopN(char *str, size_t n)
 }
 
 static void inbox_received_handler(DictionaryIterator *iter, void *context) {
+    //APP_LOG(APP_LOG_LEVEL_DEBUG, "Received inbox_received_handler from Phone!");
   if (!loaded) {
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+    if(apngEnabled)
+    layer_set_hidden(bitmap_layer_get_layer(s_bitmap_layer), true);
+    loading = false;
     loaded = true;
   }
-
+  if (DEBUG_ENABLED)
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Received dict from phone of size: \"%d\"", sizeof(iter));
-
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Pebble received message from Phone!");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Pebble received message from Phone!");
 
   Tuple *action_string = dict_find(iter, KEY_ACTION);
   int length = 0;
@@ -668,12 +1201,13 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
     listAction = (char*)malloc((length+1) * sizeof(char));
     memcpy(listAction,action_string->value->cstring,(length+1) * sizeof(char));
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Received action of: \"%s\"", listAction);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Received action of: \"%s\"", listAction);
   }
 
   if (strcmp(listAction, "response")==0){
-
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Received a http response from Phone!");
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Received a http response from Phone!");
 
     uint32_t segments[] = { vibrationLength };
     VibePattern pat = {
@@ -685,6 +1219,8 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     Tuple *response_string = dict_find(iter, KEY_RESPONSE);
     Tuple *array_row_index = dict_find(iter,KEY_INDEX);
     Tuple *array_folder_index = dict_find(iter,KEY_FOLDER_INDEX);
+    Tuple *request_name_string = dict_find(iter, KEY_REQUEST_NAME);
+    Tuple *notification_enabled = dict_find(iter,KEY_NOTIFICATION);
 
     int folder_index_of_array = 0;
     int row_index_of_array = 0;
@@ -694,13 +1230,62 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
     length = strlen(response_string->value->cstring);
 
+    bool notify = (notification_enabled->value->int32 == 0) ? false:true;
+
     if (statusList[folder_index_of_array][row_index_of_array] != NULL) {
-      //free(statusList[index_of_array] );
       statusList[folder_index_of_array][row_index_of_array]  = NULL;
+
+    if (DEBUG_ENABLED) {
+      printf("BEFORE REMOVE");
+    
+      for (int i = 0; i < vector_total(&pendingIndexList); i++)
+          printf("%s ", (char *) vector_get(&pendingIndexList, i));
+      printf("\n");
     }
-    statusList[folder_index_of_array][row_index_of_array] = (char*)malloc((length+1) * sizeof(char));
-    memcpy(statusList[folder_index_of_array][row_index_of_array],response_string->value->cstring,(length +1) * sizeof(char));
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "HTTP Response: %s", statusList[folder_index_of_array][row_index_of_array]);
+
+      //remove from pending list
+      char * indexString = indexToString(folder_index_of_array,row_index_of_array);
+      vector_remove(&pendingIndexList, indexString);
+if (DEBUG_ENABLED) {
+    printf("AFTER REMOVE");
+  for (int i = 0; i < vector_total(&pendingIndexList); i++)
+      printf("%s ", (char *) vector_get(&pendingIndexList, i));
+  printf("\n");
+}
+
+      free(indexString);
+      indexString = NULL;
+
+    }
+    if (notify) {
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Setting response in notification");
+      layer_set_hidden(menu_layer_get_layer(s_menu_layer), true);
+      if (s_scroll_layer != NULL) {
+        scroll_layer_destroy(s_scroll_layer);
+        s_scroll_layer = NULL;
+
+        if (s_text_layer != NULL) {
+          text_layer_destroy(s_text_layer);
+          s_text_layer = NULL;
+        }
+        if (s_title_text_layer != NULL) {
+          text_layer_destroy(s_title_text_layer);
+          s_title_text_layer = NULL;
+
+        }
+      }
+      showNotification(request_name_string->value->cstring,response_string->value->cstring);
+      statusList[folder_index_of_array][row_index_of_array] = (char*)malloc((length+1) * sizeof(char));
+      memcpy(statusList[folder_index_of_array][row_index_of_array],response_string->value->cstring,(length +1) * sizeof(char));
+    } else {
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Setting response in status row");
+      statusList[folder_index_of_array][row_index_of_array] = (char*)malloc((length+1) * sizeof(char));
+      memcpy(statusList[folder_index_of_array][row_index_of_array],response_string->value->cstring,(length +1) * sizeof(char));
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "HTTP Response: %s", statusList[folder_index_of_array][row_index_of_array]);
+    }
     menu_layer_reload_data(s_menu_layer);
 
 
@@ -712,20 +1297,25 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
 
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
+    if (apngEnabled)
+      layer_set_hidden(bitmap_layer_get_layer(s_bitmap_layer), false);
+    loading = true;
     loaded = false;
-
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Found chunking call");
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Found chunking call");
 
     char *string_chunk = dict_find(iter, KEY_LIST)->value->cstring; 
 
     // make sure that buffer is clear before starting new chunking activity
     if (currentChunkIndex == 0) { 
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Initializing chunk_buffer");
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Initializing chunk_buffer");
 
       //free_all_data();
 
       int list_string_length = dict_find(iter, KEY_CHUNK_SIZE)->value->int32;
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "list_string_length is : %d", list_string_length);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "list_string_length is : %d", list_string_length);
 
       if (chunk_buffer != NULL) {
         free(chunk_buffer);
@@ -736,11 +1326,13 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
       // Copy the first chunk to chunk buffer
       strcpy(chunk_buffer, string_chunk);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer strcpy result: %s", chunk_buffer);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer strcpy result: %s", chunk_buffer);
 
     } else {
       strcat(chunk_buffer, string_chunk);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer strcat result: %s", chunk_buffer);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer strcat result: %s", chunk_buffer);
     }
 
     currentChunkIndex = currentChunkIndex + 1;
@@ -756,6 +1348,9 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   }
 
     layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
+    if (apngEnabled)
+      layer_set_hidden(bitmap_layer_get_layer(s_bitmap_layer), false);
+    loading = true;
     loaded = false;
 
     if (currentChunkIndex == 0) {
@@ -781,8 +1376,10 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
       strcat(chunk_buffer, array_string);
       array_string = chunk_buffer;
 
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer concat result: %s", chunk_buffer);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Updating with array_string: %s", array_string);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "chunk_buffer concat result: %s", chunk_buffer);
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Updating with array_string: %s", array_string);
 
       // TODO: append array_string and copy back into array_string then free chunk_buffer
     } 
@@ -808,24 +1405,36 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
       //strcpy(s_buffer, array_string->value->cstring);
       memcpy(s_buffer,array_string,(length+1) * sizeof(char));
 
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "List length: %d", length);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Size retrieved from phone: %d", array_size);
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "List retrieved from phone: %s", s_buffer);
+      if (DEBUG_ENABLED) { 
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "List length: %d", length);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Size retrieved from phone: %d", array_size);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "List retrieved from phone: %s", s_buffer);
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "List retrieved from phone: %s", array_string);
+      }
 
       int bytesWritten = 0;
       int bytesSizeWritten = 0;
       int bytesLengthWritten = 0;
 
       if (array_size == 0) {
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Start writing empty values to  persist store.");
         bytesWritten = persist_write_string(PERSIST_LIST,"");
-        bytesWritten = persist_write_string(PERSIST_VERSION_3_1,VERSION);
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Wrote PERSIST_LIST");
+        bytesWritten = persist_write_string(PERSIST_VERSION_4_0_0,VERSION);
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Wrote VERSION");
         bytesSizeWritten = persist_write_int(PERSIST_LIST_SIZE,0);
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Wrote PERSIST_LIST_SIZE");
         bytesLengthWritten = persist_write_int(PERSIST_LIST_BYTE_LENGTH,0);
-
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing Empty values to persistent store.");
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Writing Empty values to persistent store.");
 
       } else {
-
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Start writing values to persist store.");
         // write into persistent store PERSIST_DATA_MAX_LENGTH - 1 bytes at a time
         int bytesRemaining = length;
         persistentListIndex = 0; 
@@ -836,26 +1445,41 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
           //sprintf(indexToInt, "%d", persistentListIndex);
 
           char *buf= malloc(PERSIST_DATA_MAX_LENGTH - 1);
-          strncpy(buf, s_buffer, PERSIST_DATA_MAX_LENGTH - 1);
+          if (DEBUG_ENABLED)
+            APP_LOG(APP_LOG_LEVEL_DEBUG, "Allocating PERSIST_DATA_MAX_LENGTH-1 : %d", PERSIST_DATA_MAX_LENGTH);
+          //APP_LOG(APP_LOG_LEVEL_DEBUG, "Anything in array_string? : %s", array_string);
+          //strncpy(buf, s_buffer, PERSIST_DATA_MAX_LENGTH - 1);
+          memcpy(buf, s_buffer, PERSIST_DATA_MAX_LENGTH - 1);
+          //strcpy(buf, s_buffer);
+          if (DEBUG_ENABLED)
+            APP_LOG(APP_LOG_LEVEL_DEBUG, "String");
           //buf[PERSIST_DATA_MAX_LENGTH - 1] = '\0';
 
           bytesWritten = persist_write_string(PERSIST_LIST + persistentListIndex,buf);
-          APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunked into persistent store: %s", s_buffer);
+          if (DEBUG_ENABLED)
+            APP_LOG(APP_LOG_LEVEL_DEBUG, "Chunked into persistent store: %s", s_buffer);
           chopN(s_buffer, PERSIST_DATA_MAX_LENGTH - 1);
+          if (DEBUG_ENABLED)
+            APP_LOG(APP_LOG_LEVEL_DEBUG, "bytesRemaining before: %d", bytesRemaining);
           bytesRemaining = bytesRemaining - PERSIST_DATA_MAX_LENGTH - 1;
+          if (DEBUG_ENABLED)
+            APP_LOG(APP_LOG_LEVEL_DEBUG, "bytesRemaining after: %d", bytesRemaining);
           persistentListIndex = persistentListIndex - 1;
-          APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list): %d", bytesWritten);
+          if (DEBUG_ENABLED)
+            APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list): %d", bytesWritten);
           free(buf);
           buf = NULL;
-          bytesWritten = persist_write_string(PERSIST_VERSION_3_1,VERSION);
         }
+        bytesWritten = persist_write_string(PERSIST_VERSION_4_0_0,VERSION);
 
 
         bytesSizeWritten = persist_write_int(PERSIST_LIST_SIZE,array_size);
         bytesLengthWritten = persist_write_int(PERSIST_LIST_BYTE_LENGTH,length);
 
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (size): %d", bytesSizeWritten);
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list_bytes): %d", bytesLengthWritten);
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (size): %d", bytesSizeWritten);
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Written to persistent storage (list_bytes): %d", bytesLengthWritten);
 
         update_menu_data(array_size);
       }
@@ -867,16 +1491,21 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
       if(s_buffer != NULL) {
         free(s_buffer);
         s_buffer = NULL;
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
       }
       if(chunk_buffer != NULL) {
         free(chunk_buffer);
         chunk_buffer = NULL;
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
       }
 
 
       layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+      if (apngEnabled)
+        layer_set_hidden(bitmap_layer_get_layer(s_bitmap_layer), true);
+      loading = false;
       loaded = true;
       menu_layer_reload_data(s_menu_layer);
     }
@@ -886,16 +1515,19 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   if (listAction != NULL){
     free(listAction);
     listAction = NULL;
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed listAction memory");
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed listAction memory");
 
   }
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Inbox handler completed");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Inbox handler completed");
 }
 
 static void select_callback(struct MenuLayer *s_menu_layer, MenuIndex *cell_index, 
                             void *callback_context) {
 
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "listSize is %d",listSize);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "listSize is %d",listSize);
   // If we were displaying s_error_text_layer, remove it and return
   if (!layer_get_hidden(text_layer_get_layer(s_error_text_layer))) {
     layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
@@ -910,13 +1542,17 @@ static void select_callback(struct MenuLayer *s_menu_layer, MenuIndex *cell_inde
 
   if (listSize == 0) {
     layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
-  } else if (folderSizeList[Stack_Top(&menuLayerStack)] == 0) {
+  } else if (at_empty_folder()) {
     text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_FOLDER);
     layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
-  } else if (strstr(statusList[Stack_Top(&menuLayerStack)][cell_index->row], "_") != NULL) { // If the status has a '_' char, we know it's a folder
+  
+  // If the status has a '_' char, we know it's a folder 
+  // also if folderIndexList is NULL, that means that means 1) no folders exist and 2) list was not generated from pebbleJS yet after 3.3.0
+  } else if (strcmp(status_content(Stack_Top(&menuLayerStack),cell_index->row),"folder") == 0) {
+    previousRowIndex = cell_index->row;
     char * currentStatus = statusList[Stack_Top(&menuLayerStack)][cell_index->row];
-    if(Stack_Top(&menuLayerStack) == 0) {
-      force_back_button(s_menu_window, s_menu_layer);
+    if(at_root()) {
+      window_set_click_config_provider_with_context(s_menu_window, folder_changed_config, s_menu_layer);
     }
     char *stringcopy = malloc ((strlen(currentStatus)+1)*sizeof(char));
     if (stringcopy)
@@ -927,13 +1563,13 @@ static void select_callback(struct MenuLayer *s_menu_layer, MenuIndex *cell_inde
     }
     Stack_Push(&menuLayerStack,atoi(stringcopy));
     Stack_Push(&menuRowStack,cell_index->row);
-    reset_menu_index(s_menu_layer,0);
+    set_menu_index(s_menu_layer,0);
     menu_layer_reload_data(s_menu_layer);
     free(stringcopy);
     stringcopy = NULL;
 
     // Check if we're now in a folder that's empty. If we are, then show error
-    if (folderSizeList[Stack_Top(&menuLayerStack)] == 0) {
+    if (at_empty_folder()) {
       text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_FOLDER);
       layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
     }
@@ -960,50 +1596,136 @@ static int16_t get_cell_height_callback(MenuLayer *menu_layer, MenuIndex *cell_i
 #endif
 
 
-
 static void draw_row_handler(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, 
                              void *callback_context) {
-
+  //if (DEBUG_ENABLED)
+    //APP_LOG(APP_LOG_LEVEL_DEBUG, "Draw handler");
   if (listSize == 0) return;
   
-  bool isEmptyFolder = folderSizeList[Stack_Top(&menuLayerStack)]==0;
-
   // if the folder's empty, draw nutt'n
-  if (!isEmptyFolder){
-    char* name = theList[Stack_Top(&menuLayerStack)][cell_index->row]; //theList TODO
-    char * currentStatus = statusList[Stack_Top(&menuLayerStack)][cell_index->row];
-    if (currentStatus != NULL) {
-      if (strstr(currentStatus, "_") != NULL) { // If the status has a '_' char, we know it's a folder
+  if (at_empty_folder()) return;
 
-        // Set the status field as "Open Folder"
-        snprintf(s_item_text, sizeof(s_item_text), "%s", "Open Folder");
-      } else { // otherwise it's a request entry
+  int folderIndex = Stack_Top(&menuLayerStack);
+  int rowIndex = cell_index->row;
 
-        // Pad the status field with "Status: " + <status of request>
-        snprintf(s_item_text, sizeof(s_item_text), "Status: %s", statusList[Stack_Top(&menuLayerStack)][cell_index->row]);
+  char* name = theList[folderIndex][rowIndex]; 
+  char * currentStatus = statusList[folderIndex][rowIndex];
+
+  GBitmap * isFolder = NULL;
+
+  //APP_LOG(APP_LOG_LEVEL_DEBUG, "Found status update: %s", currentStatus);
+
+  // printf("pendingIndexList:");
+  // for (int i = 0; i < vector_total(&pendingIndexList); i++)
+  //     printf("%s ", (char *) vector_get(&pendingIndexList, i));
+  // printf("\n");
+
+  if (currentStatus != NULL) {
+    
+    if (strcmp(status_content(folderIndex,rowIndex),"folder")==0) { 
+      // Set the status field as "Open Folder"
+      if (showFolderIcon) {
+        if (backgroundIsDark) {
+          isFolder = s_menu_icon_white;
+        } else {
+          isFolder = s_menu_icon_black;
+        }
       }
-    }
+      snprintf(s_item_text, sizeof(s_item_text), "%s", "Open Folder");
+    } else if (strcmp(status_content(Stack_Top(&menuLayerStack),cell_index->row),"pending")==0) {
 
-    // Using simple space padding between name and s_item_text for appearance of edge-alignment
-    menu_cell_basic_draw(ctx, cell_layer, name, s_item_text, NULL);
+
+      #if !defined(PBL_PLATFORM_DIORITE) && !defined(PBL_PLATFORM_APLITE)
+      snprintf(s_item_text, sizeof(s_item_text), "%s", spinner[spinnerCtr++]);
+      if (spinnerCtr >= 4) {
+        spinnerCtr = 0;
+      }
+      #else
+      snprintf(s_item_text, sizeof(s_item_text), "Status: %s", statusList[Stack_Top(&menuLayerStack)][cell_index->row]);
+      #endif
+
+      // Using simple space padding between name and s_item_text for appearance of edge-alignment
+      //menu_cell_basic_draw(ctx, cell_layer, name, s_item_text, s_menu_icon);
+      //menu_cell_basic_draw(ctx, cell_layer, name, s_item_text, NULL);
+    } else { // otherwise it's a request entry
+
+      // Pad the status field with "Status: " + <status of request>
+      snprintf(s_item_text, sizeof(s_item_text), "%s", statusList[Stack_Top(&menuLayerStack)][cell_index->row]);
+      // Using simple space padding between name and s_item_text for appearance of edge-alignment
+    }
+  } else {
+
   }
+
+    menu_cell_basic_draw(ctx, cell_layer, name, s_item_text, isFolder);
+
   
+}
+
+
+static void timer_handler(void *context) {
+  uint32_t next_delay;
+
+  // Advance to the next APNG frame
+  if(gbitmap_sequence_update_bitmap_next_frame(s_sequence, s_bitmap, &next_delay)) {
+    bitmap_layer_set_bitmap(s_bitmap_layer, s_bitmap);
+    layer_mark_dirty(bitmap_layer_get_layer(s_bitmap_layer));
+
+    // Timer for that delay
+    app_timer_register(next_delay, timer_handler, NULL);
+  } else if (!loading) {
+    // Start again
+    load_sequence();
+  }
+}
+
+static void load_sequence() {
+  // Free old data
+  if(s_sequence) {
+    gbitmap_sequence_destroy(s_sequence);
+    s_sequence = NULL;
+  }
+  if(s_bitmap) {
+    gbitmap_destroy(s_bitmap);
+    s_bitmap = NULL;
+  }
+
+  // Create sequence
+  s_sequence = gbitmap_sequence_create_with_resource(RESOURCE_ID_ANIMATION);
+
+  // Create GBitmap
+  s_bitmap = gbitmap_create_blank(gbitmap_sequence_get_bitmap_size(s_sequence), GBitmapFormat8Bit);
+
+  // Begin animation
+  app_timer_register(1, timer_handler, NULL);
 }
 
 
 
 static void menu_window_load(Window *window) {
 
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "Loading Window");
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "listSize: %d", listSize);
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "listString: %s", listString); 
+  if (DEBUG_ENABLED) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Loading Window");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "listSize: %d", listSize);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "listString: %s", listString); 
+  }
 
   Stack_Init(&menuLayerStack,listSize); 
 
-  Layer *window_layer = window_get_root_layer(window);
-  GRect bounds = layer_get_bounds(window_layer);
+  int statusBarOffset = showStatusBar ? STATUS_BAR_LAYER_HEIGHT : 0;
 
-  APP_LOG(APP_LOG_LEVEL_INFO, "1Loading Window");
+  Layer *window_layer = window_get_root_layer(window);
+  GRect window_bounds = layer_get_bounds(window_layer);
+  GRect bounds = GRect(0, statusBarOffset, window_bounds.size.w, window_bounds.size.h - statusBarOffset);
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "6Loading Icon");
+
+  s_menu_icon_white = gbitmap_create_with_resource(RESOURCE_ID_FOLDER_WHITE);
+  s_menu_icon_black = gbitmap_create_with_resource(RESOURCE_ID_FOLDER_BLACK);
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "1Loading Window");
 
   s_menu_layer = menu_layer_create(bounds);
   menu_layer_set_callbacks(s_menu_layer, NULL, (MenuLayerCallbacks){
@@ -1012,20 +1734,22 @@ static void menu_window_load(Window *window) {
     .draw_row = draw_row_handler,
     .select_click = select_callback
   });
-  APP_LOG(APP_LOG_LEVEL_INFO, "2Loading Window");
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "2Loading Window");
 
   menu_layer_set_click_config_onto_window(s_menu_layer, window);
   
   layer_add_child(window_layer, menu_layer_get_layer(s_menu_layer));
   previous_ccp = window_get_click_config_provider(window);
 
-  APP_LOG(APP_LOG_LEVEL_INFO, "3Loading Window");
-  s_error_text_layer = text_layer_create((GRect) { .origin = {0, 44}, .size = {bounds.size.w, 60}});
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "3Loading Window");
+
+  s_error_text_layer = text_layer_create((GRect) { .origin = {0, bounds.size.h / 2 - 21 + statusBarOffset}, .size = {bounds.size.w, 42}});
   text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_LIST);
   text_layer_set_font(s_error_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
   text_layer_set_text_alignment(s_error_text_layer, GTextAlignmentCenter);
-  text_layer_set_text_color(s_error_text_layer, GColorWhite);
-  text_layer_set_background_color(s_error_text_layer, GColorBlack);
   layer_set_hidden(text_layer_get_layer(s_error_text_layer), true);
   layer_add_child(window_layer, text_layer_get_layer(s_error_text_layer));
 
@@ -1033,44 +1757,139 @@ static void menu_window_load(Window *window) {
   text_layer_set_text(s_upgrade_text_layer, MSG_ERR_UPGRADE_VERSION);
   text_layer_set_font(s_upgrade_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
   text_layer_set_text_alignment(s_upgrade_text_layer, GTextAlignmentCenter);
-  text_layer_set_text_color(s_upgrade_text_layer, GColorWhite);
-  text_layer_set_background_color(s_upgrade_text_layer, GColorBlack);
   layer_set_hidden(text_layer_get_layer(s_upgrade_text_layer), true);
   layer_add_child(window_layer, text_layer_get_layer(s_upgrade_text_layer));
 
-  APP_LOG(APP_LOG_LEVEL_INFO, "4Loading Window");
-  s_loading_text_layer = text_layer_create((GRect) { .origin = {0, 60}, .size = {bounds.size.w, 60}});
-  text_layer_set_text(s_loading_text_layer, "LOADING");
-  text_layer_set_font(s_loading_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24));
-  text_layer_set_text_alignment(s_loading_text_layer, GTextAlignmentCenter);
-  text_layer_set_text_color(s_loading_text_layer, GColorWhite);
-  text_layer_set_background_color(s_loading_text_layer, GColorBlack);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "6Loading Status Bar");
+
+  status_bar = status_bar_layer_create();
+  layer_add_child(window_layer, status_bar_layer_get_layer(status_bar));
+
+  if (!showStatusBar) {
+    layer_set_hidden(status_bar_layer_get_layer(status_bar), true);
+  }
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "4Loading loading background");
+
+  s_loading_text_layer = text_layer_create((GRect) { .origin = {0, 0}, .size = {bounds.size.w, bounds.size.h + statusBarOffset}});
+  //text_layer_set_text_color(s_loading_text_layer, GColorWhite);
+  text_layer_set_background_color(s_loading_text_layer, GColorFromHEX(0xA12E37));
+  //text_layer_set_text(s_loading_text_layer, "LOADING");
+  //text_layer_set_font(s_loading_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24));
+  //text_layer_set_text_alignment(s_loading_text_layer, GTextAlignmentCenter);
   layer_set_hidden(text_layer_get_layer(s_loading_text_layer), false);
   layer_add_child(window_layer, text_layer_get_layer(s_loading_text_layer));
-  APP_LOG(APP_LOG_LEVEL_INFO, "Window load completed");
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "5Loading Gif");
+
+  #if !defined(PBL_PLATFORM_DIORITE) && !defined(PBL_PLATFORM_APLITE)
+  apngEnabled = true;
+  s_bitmap_layer = bitmap_layer_create(GRect(0, 0, window_bounds.size.w, window_bounds.size.h));
+  layer_add_child(window_layer, bitmap_layer_get_layer(s_bitmap_layer));
+  load_sequence();
+  layer_set_hidden(bitmap_layer_get_layer(s_bitmap_layer), true);
+  #endif
+
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_INFO, "Window load completed");
+
 }
 
 static void menu_window_unload(Window *window) {
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Begin destroying windows");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_menu_layer windows");
   menu_layer_destroy(s_menu_layer);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_error_text_layer windows");
   text_layer_destroy(s_error_text_layer);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_upgrade_text_layer windows");
   text_layer_destroy(s_upgrade_text_layer);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_loading_text_layer windows");
   text_layer_destroy(s_loading_text_layer);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying status_bar windows");
+  status_bar_layer_destroy(status_bar);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_bitmap_layer windows");
+  if (apngEnabled)
+  bitmap_layer_destroy(s_bitmap_layer);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_text_layer windows");
+  text_layer_destroy(s_text_layer);
+  text_layer_destroy(s_title_text_layer);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_scroll_layer windows");
+  scroll_layer_destroy(s_scroll_layer);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_menu_icon_white windows");
+  gbitmap_destroy(s_menu_icon_white);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Destroying s_menu_icon_black windows");
+  gbitmap_destroy(s_menu_icon_black);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "End destroying windows");
+
+
 }
 
 
 
 static void init(void) {
+  app_message_register_inbox_received(inbox_received_handler);
+  //app_message_open(app_message_inbox_size_maximum(), app_message_outbox_size_maximum());
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"Max size for inbox: %u",(int)app_message_inbox_size_maximum());
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"Max size for outbox: %u",(int)app_message_outbox_size_maximum());
 
-  APP_LOG(APP_LOG_LEVEL_DEBUG,"INITIALIZING...");
-  APP_LOG(APP_LOG_LEVEL_DEBUG,"APP VERSION: %s", VERSION);
+  // aplite check
+  //app_message_open(6364, 6364);
+  #if defined(PBL_PLATFORM_DIORITE) || defined(PBL_PLATFORM_APLITE)
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"MAX_INBOX_BUFFER %d",6364);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"MAX_OUTBOX_BUFFER %d",6364);
+  app_message_open(MAX_INBOX_BUFFER,MAX_OUTBOX_BUFFER);
+  #else
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"MAX_INBOX_BUFFER %d",MAX_INBOX_BUFFER);
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"MAX_OUTBOX_BUFFER %d",MAX_OUTBOX_BUFFER);
+  app_message_open(MAX_INBOX_BUFFER,MAX_OUTBOX_BUFFER);
+  #endif
 
-  /*
-    persist_delete(PERSIST_LIST_SIZE);
-    persist_delete(PERSIST_LIST);
-    persist_delete(PERSIST_LIST_BYTE_LENGTH);
-    persist_delete(PERSIST_VERSION_3_1);
-    persist_delete(PERSIST_VERSION_3_0);
-*/
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"INITIALIZING...");
+  if (DEBUG_ENABLED)
+    APP_LOG(APP_LOG_LEVEL_DEBUG,"APP VERSION: %s", VERSION);
+
+  vector_init(&pendingIndexList);
+  vector_init(&folderIndexList);
+  loading = true;
+
+  
+    if (RESET_DATA) {
+      persist_delete(PERSIST_LIST_SIZE);
+      persist_delete(PERSIST_LIST);
+      persist_delete(PERSIST_LIST_BYTE_LENGTH);
+      persist_delete(PERSIST_VERSION_3_1);
+      persist_delete(PERSIST_VERSION_3_0);
+      persist_delete(PERSIST_VERSION_4_0_0);
+    }
+
+
+    backgroundColor = GColorWhite;
+    foregroundColor = GColorWhite;
+    highlightColor = GColorFromHEX(0xA12E37);
+    backgroundIsDark = is_hex_string_dark("FFFFFF");
+    statusBarColor = GColorFromHEX(0xA12E37);
 
   s_menu_window = window_create();
   window_set_window_handlers(s_menu_window, (WindowHandlers){
@@ -1078,18 +1897,13 @@ static void init(void) {
     .unload = menu_window_unload,
   });
   window_stack_push(s_menu_window, false);
-  app_message_register_inbox_received(inbox_received_handler);
-  //app_message_open(app_message_inbox_size_maximum(), app_message_outbox_size_maximum());
-  APP_LOG(APP_LOG_LEVEL_DEBUG,"Max size for inbox: %u",(int)app_message_inbox_size_maximum());
-  APP_LOG(APP_LOG_LEVEL_DEBUG,"Max size for outbox: %u",(int)app_message_outbox_size_maximum());
 
-  // aplite check
-  //app_message_open(6364, 6364);
-  app_message_open(MAX_INBOX_BUFFER,MAX_OUTBOX_BUFFER);
-  if (persist_exists(PERSIST_VERSION_3_1)) {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store found. Assuming version post-3.1");
+  if (persist_exists(PERSIST_VERSION_4_0_0)) {
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store found. Assuming version post-4.0.0");
     if (persist_exists(PERSIST_LIST_SIZE)){
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "Found presistent store. Loading into memory.");
+      if (DEBUG_ENABLED)
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Found presistent store. Loading into memory.");
       int tempSize = persist_read_int(PERSIST_LIST_SIZE);
       update_menu_data(tempSize);
       //persist_delete(PERSIST_LIST_SIZE);
@@ -1097,40 +1911,54 @@ static void init(void) {
       if(s_buffer != NULL) {
         free(s_buffer);
         s_buffer = NULL;
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed s_buffer memory");
       }
       if(chunk_buffer != NULL) {
         free(chunk_buffer);
         chunk_buffer = NULL;
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
+        if (DEBUG_ENABLED)
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "Freed chunk_buffer memory");
       }
     }
     if (layer_get_hidden(text_layer_get_layer(s_error_text_layer)) && listString == 0) {
       text_layer_set_text(s_error_text_layer, MSG_ERR_EMPTY_LIST);
       layer_set_hidden(text_layer_get_layer(s_error_text_layer), false);
     }
-    layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
-    loaded = true;
     menu_layer_reload_data(s_menu_layer);
   } else {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store empty. Assuming version pre-3.1");
-    APP_LOG(APP_LOG_LEVEL_DEBUG,"DELETING!");
-    
-    persist_delete(PERSIST_LIST_SIZE);
-    persist_delete(PERSIST_LIST);
-    persist_delete(PERSIST_LIST_BYTE_LENGTH);
-    persist_delete(PERSIST_VERSION_3_1);
-    persist_delete(PERSIST_VERSION_3_0);
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Version persistent store empty. Assuming version pre-3.1");
+    if (DEBUG_ENABLED)
+      APP_LOG(APP_LOG_LEVEL_DEBUG,"DELETING!");
+
+    if (persist_exists(PERSIST_LIST_SIZE))
+      persist_delete(PERSIST_LIST_SIZE);
+    if (persist_exists(PERSIST_LIST))
+      persist_delete(PERSIST_LIST);
+    if (persist_exists(PERSIST_LIST_BYTE_LENGTH))
+      persist_delete(PERSIST_LIST_BYTE_LENGTH);
+    if (persist_exists(PERSIST_VERSION_3_1))
+      persist_delete(PERSIST_VERSION_3_1);
+    if (persist_exists(PERSIST_VERSION_3_0))
+      persist_delete(PERSIST_VERSION_3_0);
+    if (persist_exists(PERSIST_VERSION_4_0_0))
+      persist_delete(PERSIST_VERSION_4_0_0);
 
     text_layer_set_text(s_upgrade_text_layer, MSG_ERR_UPGRADE_VERSION);
     layer_set_hidden(text_layer_get_layer(s_upgrade_text_layer), false);
     menu_layer_reload_data(s_menu_layer);
   }
+  layer_set_hidden(text_layer_get_layer(s_loading_text_layer), true);
+  loaded = true;
+  loading = false;
 }
 
 static void deinit(void) {
   window_destroy(s_menu_window);
   Stack_Deinit(&menuLayerStack);
+  vector_free(&pendingIndexList);
+  vector_free(&folderIndexList);
   //free_all_data();
 }
 

@@ -1,31 +1,49 @@
 {
-  "uuid": "fa0bec73-140f-4675-babd-5333731f83bf",
-  "shortName": "HTTP Push",
-  "longName": "HTTP Push",
-  "companyName": "Sean Konagaya",
-  "versionLabel": "3.2",
-  "sdkVersion": "3",
-  "targetPlatforms": ["aplite","chalk", "basalt"],
-  "watchapp": {
-    "watchface": false
-  },
-  "capabilities": [
-    "configurable"
-  ],
-  "appKeys": {
-    "KEY_LIST": 0,
-    "KEY_SIZE": 1,
-    "KEY_INDEX": 2,
-    "KEY_RESPONSE": 3,
-    "KEY_ACTION": 4,
-    "KEY_FOLDER_INDEX": 5,
-    "KEY_CHUNK_INDEX": 6,
-    "KEY_CHUNK_SIZE": 7,
-    "KEY_VERSION": 8,
-    "KEY_ERROR": 9
-  },
-  "resources": {
-      "media": [
-      ]
-  }
+    "uuid": "fa0bec73-140f-4675-babd-5333731f83bf",
+    "shortName": "HTTP Push",
+    "longName": "HTTP Push",
+    "companyName": "Sean Konagaya",
+    "versionLabel": "4.2",
+    "sdkVersion": "3",
+    "targetPlatforms": ["aplite", "chalk", "basalt", "emery", "diorite"],
+    "watchapp": {
+        "watchface": false
+    },
+    "capabilities": [
+        "configurable"
+    ],
+    "appKeys": {
+        "KEY_LIST": 0,
+        "KEY_SIZE": 1,
+        "KEY_INDEX": 2,
+        "KEY_RESPONSE": 3,
+        "KEY_ACTION": 4,
+        "KEY_FOLDER_INDEX": 5,
+        "KEY_CHUNK_INDEX": 6,
+        "KEY_CHUNK_SIZE": 7,
+        "KEY_VERSION": 8,
+        "KEY_ERROR": 9,
+        "KEY_NOTIFICATION": 10,
+        "KEY_REQUEST_NAME": 11
+    },
+    "resources": {
+        "media": [{
+            "type": "raw",
+            "name": "ANIMATION",
+            "file": "images/dog.png"
+        }, {
+            "type": "png",
+            "name": "FOLDER_BLACK",
+            "file": "images/folderdark.png"
+        }, {
+            "type": "png",
+            "name": "FOLDER_WHITE",
+            "file": "images/folderlight.png"
+        }, {
+            "type": "png",
+            "menuIcon": true,
+            "name": "IMAGE_MENU_ICON",
+            "file": "images/icon.png"
+        }]
+    }
 }
